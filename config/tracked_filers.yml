@@ -1,0 +1,186 @@
+# Tracked filers — the 30 the user actually watches.
+#
+# Categories:
+#   value      - long-horizon value/generalist managers
+#   concentrated - high-conviction concentrated/contrarian books
+#   growth     - growth/tech books (mostly Tiger cubs + ARK)
+#   activist   - 13D-filers who actively push for change; weighted heaviest
+#   macro      - macro / event-driven
+#
+# multiplier applies to ALL signals from this filer in the confluence scorer.
+# Per the user's stated rationale, activists are weighted heaviest because
+# 13D filings from them have historically had higher hit rates.
+#
+# CIK lookup: https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany
+# Almost all CIKs below are intentionally null — Claude Code: look these up
+# from EDGAR rather than guessing. Wrong CIKs silently corrupt ingestion.
+# Only filled in the few CIKs I'm certain on; do not invent the rest.
+
+filers:
+  # ─── value / generalists (multiplier 1.0) ────────────────────────────────
+  - name: "Berkshire Hathaway (Buffett)"
+    cik: "0001067983"
+    category: value
+    multiplier: 1.0
+
+  - name: "Duquesne Family Office (Druckenmiller)"
+    cik: null  # TODO
+    category: value
+    multiplier: 1.0
+
+  - name: "Baupost Group (Klarman)"
+    cik: null  # TODO
+    category: value
+    multiplier: 1.0
+
+  - name: "Appaloosa Management (Tepper)"
+    cik: null  # TODO
+    category: value
+    multiplier: 1.0
+
+  - name: "Oaktree Capital (Marks)"
+    cik: null  # TODO — Oaktree has multiple entities; pick the one filing 13F
+    category: value
+    multiplier: 1.0
+
+  - name: "Pabrai Investment Funds (Pabrai)"
+    cik: null  # TODO
+    category: value
+    multiplier: 1.0
+
+  - name: "Greenlight Capital (Einhorn)"
+    cik: null  # TODO
+    category: value
+    multiplier: 1.0
+
+  - name: "Gotham Asset Management (Greenblatt)"
+    cik: null  # TODO
+    category: value
+    multiplier: 1.0
+
+  - name: "Fairholme Capital (Berkowitz)"
+    cik: null  # TODO
+    category: value
+    multiplier: 1.0
+
+  - name: "Fairfax Financial (Watsa)"
+    cik: null  # TODO
+    category: value
+    multiplier: 1.0
+
+  # ─── concentrated / contrarian (multiplier 1.0) ──────────────────────────
+  - name: "Scion Asset Management (Burry)"
+    cik: null  # TODO
+    category: concentrated
+    multiplier: 1.0
+
+  - name: "Semper Augustus Investments (Bloomstran)"
+    cik: null  # TODO
+    category: concentrated
+    multiplier: 1.0
+
+  - name: "Valley Forge Capital (Kantesaria)"
+    cik: null  # TODO
+    category: concentrated
+    multiplier: 1.0
+
+  - name: "Lyrical Asset Management (Wellington)"
+    cik: null  # TODO
+    category: concentrated
+    multiplier: 1.0
+
+  # ─── growth / tech (multiplier 1.0) ──────────────────────────────────────
+  - name: "Tiger Global Management (Coleman)"
+    cik: null  # TODO
+    category: growth
+    multiplier: 1.0
+
+  - name: "Coatue Management (Laffont)"
+    cik: null  # TODO
+    category: growth
+    multiplier: 1.0
+
+  - name: "Lone Pine Capital (Mandel)"
+    cik: null  # TODO
+    category: growth
+    multiplier: 1.0
+
+  - name: "Viking Global Investors (Halvorsen)"
+    cik: null  # TODO
+    category: growth
+    multiplier: 1.0
+
+  - name: "Maverick Capital (Ainslie)"
+    cik: null  # TODO
+    category: growth
+    multiplier: 1.0
+
+  # NOTE: Cathie Wood / ARK is included specifically because she discloses
+  # ARK ETF holdings DAILY, not just quarterly. The ingest module should treat
+  # ARK as a special case: pull from ark-funds.com daily trade CSVs in addition
+  # to quarterly 13F. Do not collapse this back to 13F-only.
+  - name: "ARK Investment Management (Wood)"
+    cik: "0001697748"
+    category: growth
+    multiplier: 1.0
+    # special: see daily-disclosure note above
+
+  # ─── activists (multiplier 2.0 — heaviest in scorer) ─────────────────────
+  - name: "Pershing Square Capital Management (Ackman)"
+    cik: "0001336528"
+    category: activist
+    multiplier: 2.0
+
+  - name: "Third Point LLC (Loeb)"
+    cik: "0001040273"
+    category: activist
+    multiplier: 2.0
+
+  - name: "Icahn Capital (Icahn)"
+    cik: null  # TODO
+    category: activist
+    multiplier: 2.0
+
+  - name: "Trian Fund Management (Peltz)"
+    cik: null  # TODO
+    category: activist
+    multiplier: 2.0
+
+  - name: "Elliott Investment Management (Singer)"
+    cik: null  # TODO
+    category: activist
+    multiplier: 2.0
+
+  - name: "Starboard Value LP (Smith)"
+    cik: "0001517137"
+    category: activist
+    multiplier: 2.0
+
+  - name: "Corvex Management (Meister)"
+    cik: null  # TODO
+    category: activist
+    multiplier: 2.0
+
+  - name: "ValueAct Capital Management"
+    cik: "0001418814"
+    category: activist
+    multiplier: 2.0
+
+  - name: "Inclusive Capital Partners (Ubben)"
+    cik: null  # TODO
+    category: activist
+    multiplier: 2.0
+
+  # ─── macro / event-driven (multiplier 1.0) ───────────────────────────────
+  - name: "Hayman Capital Management (Bass)"
+    cik: null  # TODO
+    category: macro
+    multiplier: 1.0
+
+# ─────────────────────────────────────────────────────────────────────────
+# Deliberate exclusions — do NOT re-add without reading CLAUDE.md §6.0:
+#   - Bridgewater (Dalio)    — too diversified; 13F signal poor
+#   - Renaissance Technologies — mostly stat-arb noise
+#   - Soros Fund Management  — mostly bonds/macro; 13Fs unrepresentative
+# Count: 30 active filers. If editing, keep the count and the rationale aligned.
+# ─────────────────────────────────────────────────────────────────────────

@@ -1,0 +1,59 @@
+# Signal weights, universe filters, exit rules, and polling cadence.
+#
+# These are STARTING DEFAULTS aligned with CLAUDE.md §2. Tune them in code
+# review, not in production. Each value has a one-line rationale.
+
+# ──────────────────────────────────────────────────────────────────────────
+# Confluence scorer weights (per signal type)
+#
+# Final weight for a single event = base_weight × filer.multiplier
+# Score for a ticker = sum of all event weights inside window_days, decayed.
+# ──────────────────────────────────────────────────────────────────────────
+confluence:
+  window_days: 60               # rolling window over which events compound
+  decay: linear                 # linear | exponential | none
+  half_life_days: 30            # only used if decay=exponential
+
+  weights:
+    13d_new:        3.0         # new activist stake disclosure — strongest single event
+    13d_amend_up:   1.5         # 13D/A increasing stake
+    13d_amend_flat: 0.3         # 13D/A no size change (mostly noise)
+    13g_new:        1.2         # passive 5%+ stake
+    13f_new:        1.0         # new position appearing in 13F (45d delayed — see §9)
+    13f_add:        0.6         # ≥10% share-count increase
+    13f_trim:      -0.5         # ≥10% decrease (negative — works against entry signals)
+    13f_exit:      -1.5         # full exit (strong negative)
+    form4_buy:      0.8         # single insider open-market buy
+    form4_cluster:  2.0         # ≥3 insiders buying in 30d (replaces, not adds to, individual form4_buy)
+
+  signal_threshold: 3.0         # minimum score to emit an entry signal
+
+# ──────────────────────────────────────────────────────────────────────────
+# Universe filter — FOMO suppression (CLAUDE.md §2.2)
+# Applied AFTER scoring but BEFORE surfacing as a signal.
+# ──────────────────────────────────────────────────────────────────────────
+universe:
+  late_stage_threshold_6mo: 0.60   # drop tickers with trailing 6mo return > 60%
+  late_stage_threshold_3mo: 0.40   # secondary check
+  min_market_cap_usd: 300_000_000  # liquidity floor
+  min_avg_dollar_volume_usd: 5_000_000   # 20d avg
+
+# ──────────────────────────────────────────────────────────────────────────
+# Exit rules (CLAUDE.md §2.3 — non-negotiable)
+# Applied daily against user_positions. Signals always surface.
+# ──────────────────────────────────────────────────────────────────────────
+exit_rules:
+  trailing_stop_pct: 0.20         # from highest close since entry
+  filer_full_exit: true           # any tracked filer fully exits → emit
+  score_decay_with_drawdown:
+    enabled: true
+    score_below: 1.0              # confluence score has decayed below this
+    price_below_entry: true       # AND price is below entry
+
+# ──────────────────────────────────────────────────────────────────────────
+# Polling cadence (GitHub Actions cron)
+# ──────────────────────────────────────────────────────────────────────────
+schedule:
+  edgar_poll_cron: "0 * * * *"          # hourly
+  daily_pipeline_cron: "0 22 * * 1-5"   # 22:00 UTC = 18:00 ET, Mon–Fri
+  price_snapshot_cron: "30 21 * * 1-5"  # 21:30 UTC = 17:30 ET (before pipeline)
