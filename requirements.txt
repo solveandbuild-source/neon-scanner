@@ -1,6 +1,7 @@
 requests>=2.32
 python-dotenv>=1.0
 pyyaml>=6.0
+ruamel.yaml>=0.18         # round-trip YAML editing that preserves comments + formatting
 supabase>=2.5
 beautifulsoup4>=4.12
 lxml>=5.2
