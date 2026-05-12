@@ -1,8 +1,12 @@
 """EDGAR ingestion: fetches recent filings for tracked filers.
 
-Phase A (this file's current state): smoke test against Berkshire only.
-Phase B (CIK resolution for the 24 nulls) and Phase C (loop over all 30)
-are layered on once A is verified end-to-end.
+Driven by config/tracked_filers.yml. For each filer with a CIK, hits
+EDGAR's official JSON submissions API, filters to tracked form types,
+and upserts into filings_raw deduped by accession_number.
+
+Entry points:
+  python -m ingest.edgar          # ingest all filers with CIKs
+  python -m ingest.edgar smoke    # Berkshire-only debug run
 
 Per CLAUDE.md:
   §2.4 — raw_payload is the source of truth; we persist what EDGAR returned,
@@ -17,12 +21,14 @@ Per CLAUDE.md:
 from __future__ import annotations
 
 import os
+import sys
 import time
 from pathlib import Path
 from typing import Any
 
 import requests
 from dotenv import load_dotenv
+from ruamel.yaml import YAML
 from supabase import Client, create_client
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -33,6 +39,8 @@ SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_SECRET_KEY = os.environ["SUPABASE_SECRET_KEY"]
 
 EDGAR_HEADERS = {"User-Agent": EDGAR_USER_AGENT, "Accept": "application/json"}
+
+FILERS_PATH = PROJECT_ROOT / "config" / "tracked_filers.yml"
 
 # Forms we care about. Anything else returned by EDGAR is ignored at this layer.
 TRACKED_FORM_TYPES = {
@@ -53,15 +61,26 @@ def _supabase() -> Client:
 
 
 def _polite_get(url: str) -> requests.Response:
-    """GET with rate-limiting and EDGAR-required User-Agent."""
+    """GET with rate-limiting + retry on 5xx (EDGAR is mostly stable but
+    submissions endpoint occasionally returns 5xx under load)."""
     global _last_request_at
-    delta = time.monotonic() - _last_request_at
-    if delta < MIN_INTERVAL_S:
-        time.sleep(MIN_INTERVAL_S - delta)
-    resp = requests.get(url, headers=EDGAR_HEADERS, timeout=30)
-    _last_request_at = time.monotonic()
-    resp.raise_for_status()
-    return resp
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        delta = time.monotonic() - _last_request_at
+        if delta < MIN_INTERVAL_S:
+            time.sleep(MIN_INTERVAL_S - delta)
+        try:
+            resp = requests.get(url, headers=EDGAR_HEADERS, timeout=30)
+            _last_request_at = time.monotonic()
+            if 500 <= resp.status_code < 600:
+                raise requests.HTTPError(f"{resp.status_code} server error", response=resp)
+            resp.raise_for_status()
+            return resp
+        except (requests.HTTPError, requests.ConnectionError, requests.Timeout) as e:
+            last_exc = e
+            time.sleep(1.5 * (attempt + 1))
+    assert last_exc is not None
+    raise last_exc
 
 
 def fetch_filer_submissions(cik: str) -> dict[str, Any]:
@@ -95,7 +114,6 @@ def extract_filing_rows(submissions: dict[str, Any]) -> list[dict[str, Any]]:
         acc = recent["accessionNumber"][i]
         primary_doc = recent["primaryDocument"][i]
         acc_nodash = acc.replace("-", "")
-        # EDGAR's archive URL pattern: /Archives/edgar/data/<int_cik>/<acc_nodash>/<file>
         primary_doc_url = (
             f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc_nodash}/{primary_doc}"
         )
@@ -117,8 +135,7 @@ def extract_filing_rows(submissions: dict[str, Any]) -> list[dict[str, Any]]:
 def upsert_filings(rows: list[dict[str, Any]]) -> tuple[int, int]:
     """Upsert rows into filings_raw, deduping by accession_number.
 
-    Returns (newly_inserted, total_seen). We pre-query existing accession
-    numbers so the smoke-test summary can distinguish new vs. dedup'd.
+    Returns (newly_inserted, total_seen).
     """
     if not rows:
         return 0, 0
@@ -137,29 +154,97 @@ def upsert_filings(rows: list[dict[str, Any]]) -> tuple[int, int]:
     return len(new_rows), len(rows)
 
 
-def smoke_test_berkshire() -> None:
-    """Phase A smoke test: end-to-end against one known filer."""
-    cik = "0001067983"
-    print(f"Fetching EDGAR submissions for Berkshire (CIK {cik})…")
+def load_filers_with_ciks() -> list[dict[str, Any]]:
+    """Read tracked_filers.yml, return entries that have a non-null CIK.
+
+    Filers with cik: null are skipped here and logged as TODOs by the caller.
+    """
+    yaml = YAML()
+    with FILERS_PATH.open() as f:
+        data = yaml.load(f)
+    out: list[dict[str, Any]] = []
+    for entry in data["filers"]:
+        cik = entry.get("cik")
+        name = entry.get("name", "")
+        if not name or name.startswith("TODO"):
+            continue
+        out.append({"cik": cik, "name": name, "category": entry.get("category")})
+    return out
+
+
+def ingest_filer(cik: str, name: str) -> dict[str, Any]:
+    """Fetch + extract + upsert for one filer. Returns a summary dict."""
     submissions = fetch_filer_submissions(cik)
-    print(f"  Filer name from EDGAR: {submissions.get('name')}")
-
     rows = extract_filing_rows(submissions)
-    print(f"  Found {len(rows)} filings in tracked form types.")
-    if rows:
-        forms: dict[str, int] = {}
-        for r in rows:
-            forms[r["form_type"]] = forms.get(r["form_type"], 0) + 1
-        print(f"  By form: {forms}")
-        most_recent = max(rows, key=lambda r: r["filed_at"])
-        print(
-            f"  Most recent: {most_recent['form_type']} filed "
-            f"{most_recent['filed_at'][:10]} (period {most_recent['period_of_report']})"
-        )
-
     inserted, total = upsert_filings(rows)
-    print(f"  Inserted {inserted} new ({total - inserted} already in filings_raw).")
+    return {
+        "name": name,
+        "cik": cik.zfill(10),
+        "edgar_name": submissions.get("name"),
+        "total_seen": total,
+        "newly_inserted": inserted,
+    }
+
+
+def smoke_test_berkshire() -> None:
+    """Single-filer debug run."""
+    cik = "0001067983"
+    print(f"Smoke test: Berkshire (CIK {cik})…")
+    summary = ingest_filer(cik, "Berkshire Hathaway")
+    print(f"  EDGAR name: {summary['edgar_name']}")
+    print(f"  Inserted {summary['newly_inserted']} new "
+          f"({summary['total_seen'] - summary['newly_inserted']} dedup'd).")
+
+
+def ingest_all_filers() -> None:
+    """Loop over every filer in tracked_filers.yml with a non-null CIK."""
+    filers = load_filers_with_ciks()
+    todos: list[str] = [f["name"] for f in filers if f["cik"] is None]
+    actionable = [f for f in filers if f["cik"] is not None]
+
+    print(f"Ingesting {len(actionable)} filers ({len(todos)} skipped, CIK still null).\n")
+
+    grand_inserted = 0
+    grand_seen = 0
+    errors: list[tuple[str, str]] = []
+
+    for i, f in enumerate(actionable, 1):
+        cik = f["cik"]
+        name = f["name"]
+        if "ARK Investment" in name:
+            # §6.0 reminder: quarterly 13F only here; daily disclosures are TODO.
+            print(f"[{i}/{len(actionable)}] {name} (ARK: 13F only — daily CSVs are TODO)")
+        else:
+            print(f"[{i}/{len(actionable)}] {name}")
+        try:
+            summary = ingest_filer(cik, name)
+        except Exception as e:
+            errors.append((name, str(e)))
+            print(f"    ERROR: {e}")
+            continue
+        grand_inserted += summary["newly_inserted"]
+        grand_seen += summary["total_seen"]
+        print(f"    {summary['newly_inserted']} new, "
+              f"{summary['total_seen'] - summary['newly_inserted']} dedup'd "
+              f"(EDGAR name: {summary['edgar_name']})")
+
+    print(f"\n=== Summary ===")
+    print(f"Filers ingested : {len(actionable) - len(errors)}/{len(actionable)}")
+    print(f"Total filings   : {grand_seen}")
+    print(f"Newly inserted  : {grand_inserted}")
+    print(f"Dedup'd         : {grand_seen - grand_inserted}")
+    if todos:
+        print(f"\nSkipped (CIK still null in YAML):")
+        for n in todos:
+            print(f"  - {n}")
+    if errors:
+        print(f"\nErrors:")
+        for n, msg in errors:
+            print(f"  - {n}: {msg}")
 
 
 if __name__ == "__main__":
-    smoke_test_berkshire()
+    if len(sys.argv) > 1 and sys.argv[1] == "smoke":
+        smoke_test_berkshire()
+    else:
+        ingest_all_filers()
