@@ -24,94 +24,94 @@ filers:
     multiplier: 1.0
 
   - name: "Duquesne Family Office (Druckenmiller)"
-    cik: null  # TODO
+    cik: "0001536411"
     category: value
     multiplier: 1.0
 
   - name: "Baupost Group (Klarman)"
-    cik: null  # TODO
+    cik: "0001061768"
     category: value
     multiplier: 1.0
 
   - name: "Appaloosa Management (Tepper)"
-    cik: null  # TODO
+    cik: "0001006438"
     category: value
     multiplier: 1.0
 
   - name: "Oaktree Capital (Marks)"
-    cik: null  # TODO — Oaktree has multiple entities; pick the one filing 13F
+    cik: "0000949509"
     category: value
     multiplier: 1.0
 
   - name: "Pabrai Investment Funds (Pabrai)"
-    cik: null  # TODO
+    cik:       # TODO
     category: value
     multiplier: 1.0
 
   - name: "Greenlight Capital (Einhorn)"
-    cik: null  # TODO
+    cik: "0001079114"
     category: value
     multiplier: 1.0
 
   - name: "Gotham Asset Management (Greenblatt)"
-    cik: null  # TODO
+    cik: "0001510387"
     category: value
     multiplier: 1.0
 
   - name: "Fairholme Capital (Berkowitz)"
-    cik: null  # TODO
+    cik: "0001056831"
     category: value
     multiplier: 1.0
 
   - name: "Fairfax Financial (Watsa)"
-    cik: null  # TODO
+    cik: "0000915191"
     category: value
     multiplier: 1.0
 
   # ─── concentrated / contrarian (multiplier 1.0) ──────────────────────────
   - name: "Scion Asset Management (Burry)"
-    cik: null  # TODO
+    cik: "0001649339"
     category: concentrated
     multiplier: 1.0
 
   - name: "Semper Augustus Investments (Bloomstran)"
-    cik: null  # TODO
+    cik: "0001115373"
     category: concentrated
     multiplier: 1.0
 
   - name: "Valley Forge Capital (Kantesaria)"
-    cik: null  # TODO
+    cik: "0001697868"
     category: concentrated
     multiplier: 1.0
 
   - name: "Lyrical Asset Management (Wellington)"
-    cik: null  # TODO
+    cik: "0001542302"
     category: concentrated
     multiplier: 1.0
 
   # ─── growth / tech (multiplier 1.0) ──────────────────────────────────────
   - name: "Tiger Global Management (Coleman)"
-    cik: null  # TODO
+    cik: "0001167483"
     category: growth
     multiplier: 1.0
 
   - name: "Coatue Management (Laffont)"
-    cik: null  # TODO
+    cik: "0001135730"
     category: growth
     multiplier: 1.0
 
   - name: "Lone Pine Capital (Mandel)"
-    cik: null  # TODO
+    cik: "0001061165"
     category: growth
     multiplier: 1.0
 
   - name: "Viking Global Investors (Halvorsen)"
-    cik: null  # TODO
+    cik: "0001103804"
     category: growth
     multiplier: 1.0
 
   - name: "Maverick Capital (Ainslie)"
-    cik: null  # TODO
+    cik: "0000934639"
     category: growth
     multiplier: 1.0
 
@@ -137,17 +137,17 @@ filers:
     multiplier: 2.0
 
   - name: "Icahn Capital (Icahn)"
-    cik: null  # TODO
+    cik: "0001412093"
     category: activist
     multiplier: 2.0
 
   - name: "Trian Fund Management (Peltz)"
-    cik: null  # TODO
+    cik: "0001345471"
     category: activist
     multiplier: 2.0
 
   - name: "Elliott Investment Management (Singer)"
-    cik: null  # TODO
+    cik: "0001791786"
     category: activist
     multiplier: 2.0
 
@@ -157,7 +157,7 @@ filers:
     multiplier: 2.0
 
   - name: "Corvex Management (Meister)"
-    cik: null  # TODO
+    cik: "0001535472"
     category: activist
     multiplier: 2.0
 
@@ -167,13 +167,13 @@ filers:
     multiplier: 2.0
 
   - name: "Inclusive Capital Partners (Ubben)"
-    cik: null  # TODO
+    cik: "0001817187"
     category: activist
     multiplier: 2.0
 
   # ─── macro / event-driven (multiplier 1.0) ───────────────────────────────
   - name: "Hayman Capital Management (Bass)"
-    cik: null  # TODO
+    cik: "0001420192"
     category: macro
     multiplier: 1.0
 
