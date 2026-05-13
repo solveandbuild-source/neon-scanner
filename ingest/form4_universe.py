@@ -132,35 +132,50 @@ def _text_of(elem: ET.Element | None, *path: str) -> str | None:
 
 
 def fetch_form4_xml(file_name: str) -> tuple[bytes | None, str]:
-    """Given the file_name from the daily index (e.g.
-    'edgar/data/320193/000114036126020298/0001140361-26-020298-index.htm'),
-    derive and fetch the ownership.xml. Returns (xml_bytes, raw_url)."""
-    # The index entry points to the FILING INDEX page. We want the ownership.xml
-    # in the same directory.
-    # File name typically looks like: edgar/data/<cik>/<acc-with-dashes>/<acc>-index.htm
-    # OR: edgar/data/<cik>/<acc-no-dashes>/<file>.txt
-    base = "https://www.sec.gov/Archives/"
-    # Get the directory of the filing
-    dir_part = file_name.rsplit("/", 1)[0]
-    # Try common ownership XML filenames
+    """Given the daily-index file_name (e.g. 'edgar/data/1659494/0001104659-26-057920.txt'),
+    derive the filing directory and fetch the ownership.xml.
+
+    The daily-index file_name points to the submission TEXT file, not the
+    filing directory. The filing dir is at /edgar/data/<cik>/<accession_no_dashes>/.
+    """
+    # Extract accession (with dashes) and CIK from the filename
+    acc_match = re.search(r"(\d{10}-\d{2}-\d{6})", file_name)
+    if not acc_match:
+        return None, ""
+    acc_with_dashes = acc_match.group(1)
+    acc_no_dashes = acc_with_dashes.replace("-", "")
+
+    cik_match = re.search(r"data/(\d+)/", file_name)
+    if not cik_match:
+        return None, ""
+    cik = cik_match.group(1)
+
+    base_dir = f"https://www.sec.gov/Archives/edgar/data/{cik}/{acc_no_dashes}"
+
+    # Try the well-known filenames first
     for candidate in ("ownership.xml", "primary_doc.xml"):
-        url = f"{base}{dir_part}/{candidate}"
+        url = f"{base_dir}/{candidate}"
         r = _polite_get(url, HEADERS_XML)
         if r and r.status_code == 200 and b"<ownershipDocument" in r.content[:500]:
             return r.content, url
-    # Fallback: hit the index.json to discover the right XML
-    idx_url = f"{base}{dir_part}/index.json"
+
+    # Fallback: hit index.json to discover the right XML filename
+    # Form 4 XML filenames vary widely (some filers use custom names like
+    # 'tm2614064-1_4seq1.xml'). Try each .xml file in order until one looks
+    # like an ownership document.
+    idx_url = f"{base_dir}/index.json"
     r = _polite_get(idx_url, HEADERS_XML)
     if r and r.status_code == 200:
         try:
             files = r.json().get("directory", {}).get("item", [])
             xmls = [f["name"] for f in files if f["name"].endswith(".xml") and "/" not in f["name"]]
+            # Heuristic ordering: anything mentioning ownership/form4 first
+            xmls.sort(key=lambda n: 0 if ("ownership" in n.lower() or "form4" in n.lower() or "_4" in n.lower()) else 1)
             for fn in xmls:
-                if "ownership" in fn.lower() or "form4" in fn.lower():
-                    url = f"{base}{dir_part}/{fn}"
-                    r2 = _polite_get(url, HEADERS_XML)
-                    if r2 and r2.status_code == 200:
-                        return r2.content, url
+                url = f"{base_dir}/{fn}"
+                r2 = _polite_get(url, HEADERS_XML)
+                if r2 and r2.status_code == 200 and b"<ownershipDocument" in r2.content[:1500]:
+                    return r2.content, url
         except Exception:
             pass
     return None, ""
