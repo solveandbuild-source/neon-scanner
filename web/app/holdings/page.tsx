@@ -1,5 +1,5 @@
 import { supabaseServer } from "@/lib/supabase";
-import Link from "next/link";
+import { filerInfo, tier } from "@/lib/filers";
 
 // Holdings view: per-filer most recent 13F snapshot, with top positions by value.
 // This is *plumbing inspection*, not signal generation — confluence scoring
@@ -126,11 +126,26 @@ export default async function HoldingsPage() {
         </p>
       </header>
 
+      <p className="text-xs text-neutral-500">
+        <span className="inline-block w-2 h-2 align-middle mr-1 bg-amber-500"></span> activist filer ·
+        <span className="inline-block w-2 h-2 align-middle mx-1 bg-sky-500"></span> corporate strategic ·
+        plain border = value / growth / concentrated.
+      </p>
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {filers.map((f) => (
-          <div key={f.cik} className="rounded-md border border-neutral-800 overflow-hidden">
+        {filers.map((f) => {
+          const info = filerInfo(f.cik);
+          const t = tier(f.cik);
+          const borderL = t === 2 ? "border-l-amber-500" : t === 1 ? "border-l-sky-500" : "border-l-neutral-800";
+          return (
+          <div key={f.cik} className={`rounded-md border border-neutral-800 border-l-2 ${borderL} overflow-hidden`}>
             <div className="px-3 py-2 bg-neutral-900 flex items-baseline justify-between gap-2">
-              <div className="font-medium text-neutral-100 truncate" title={f.name}>{f.name}</div>
+              <div>
+                <div className="font-medium text-neutral-100 truncate" title={f.name}>{info?.entity ?? f.name}</div>
+                {info?.manager && (
+                  <div className="text-xs text-neutral-500">{info.manager} · {info.category}</div>
+                )}
+              </div>
               <div className="text-xs text-neutral-500 tabular-nums">period {f.latestPeriod}</div>
             </div>
             <table className="w-full text-xs">
@@ -154,7 +169,8 @@ export default async function HoldingsPage() {
               </tbody>
             </table>
           </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
