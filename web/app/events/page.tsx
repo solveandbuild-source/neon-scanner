@@ -211,6 +211,46 @@ async function fetchInsiderBuys(): Promise<EventForm4[]> {
   }));
 }
 
+// Notable insider sales: code 'S' with transaction value >= NOTABLE_SALE_USD.
+// Most sales are noise (taxes, planned 10b5-1, diversification) — but large
+// sales by named executives still carry signal worth surfacing.
+const NOTABLE_SALE_USD = 5_000_000;
+
+async function fetchNotableSales(): Promise<EventForm4[]> {
+  const sb = supabaseServer();
+  // We can't filter by computed shares*price in Supabase directly, so we
+  // pull a wider net and filter in JS.
+  const { data, error } = await sb
+    .from("events_form4")
+    .select(
+      "filing_id,reporter_cik,reporter_name,issuer_name,ticker,transaction_date,transaction_code,shares,price,filings_raw!inner(primary_doc_url)",
+    )
+    .eq("transaction_code", "S")
+    .order("transaction_date", { ascending: false })
+    .limit(500);
+  if (error) throw error;
+  return (
+    data as unknown as Array<EventForm4 & { filings_raw: { primary_doc_url: string | null } }>
+  )
+    .map((r) => ({
+      filing_id: r.filing_id,
+      reporter_cik: r.reporter_cik,
+      reporter_name: r.reporter_name,
+      issuer_name: r.issuer_name,
+      ticker: r.ticker,
+      transaction_date: r.transaction_date,
+      transaction_code: r.transaction_code,
+      shares: r.shares,
+      price: r.price,
+      primary_doc_url: r.filings_raw?.primary_doc_url ?? null,
+    }))
+    .filter((e) => {
+      const val = (e.shares ?? 0) * (e.price ?? 0);
+      return val >= NOTABLE_SALE_USD;
+    })
+    .slice(0, 30);
+}
+
 function fmtShares(n: number | null): string {
   if (n == null) return "—";
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -237,9 +277,10 @@ function tierBorderClass(t: 0 | 1 | 2): string {
 }
 
 export default async function EventsPage() {
-  const [allEvents, insiderBuys, eightKs] = await Promise.all([
+  const [allEvents, insiderBuys, notableSales, eightKs] = await Promise.all([
     fetchAllEvents13D(),
     fetchInsiderBuys(),
+    fetchNotableSales(),
     fetch8Ks(),
   ]);
   const recent13D = allEvents.slice(0, 60);
@@ -252,8 +293,9 @@ export default async function EventsPage() {
           <div className="rounded-md border border-neutral-800 p-3">
             <div className="text-neutral-400 font-medium uppercase tracking-wide mb-2">On this page</div>
             <ul className="space-y-1 text-neutral-300">
-              <li><span className="font-mono text-neutral-100">13D/G</span> — activist or passive 5%+ stakes</li>
-              <li><span className="font-mono text-neutral-100">Form 4 P</span> — insider purchases</li>
+              <li><span className="font-mono text-neutral-100">13D/G</span> — activist / passive stakes</li>
+              <li><span className="font-mono text-neutral-100">Form 4 P</span> — insider buys</li>
+              <li><span className="font-mono text-neutral-100">Form 4 S</span> — insider sales ≥ $5M</li>
               <li><span className="font-mono text-neutral-100">8-K</span> — corporate material events</li>
             </ul>
           </div>
@@ -388,6 +430,64 @@ export default async function EventsPage() {
                     </td>
                   </tr>
                 ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <section>
+        <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-400 mb-3">
+          Notable insider sales — Form 4 code &apos;S&apos;, ≥ $5M ({notableSales.length})
+        </h2>
+        <p className="text-xs text-neutral-500 mb-3">
+          Most insider sales are noise (taxes, 10b5-1 plans, diversification). These are the few large enough to matter — sales of ≥ $5M by named executives. Red bar = activist filer&apos;s 10%+ ownership Form 4. Sales themselves are NOT a buy signal — they&apos;re context.
+        </p>
+        {notableSales.length === 0 ? (
+          <p className="text-sm text-neutral-500">No notable insider sales in current data.</p>
+        ) : (
+          <div className="rounded-md border border-neutral-800">
+            <table className="w-full text-sm">
+              <thead className="bg-neutral-900 text-left text-xs uppercase tracking-wider text-neutral-400">
+                <tr>
+                  <th className="px-3 py-2 font-medium">When</th>
+                  <th className="px-3 py-2 font-medium">Reporter</th>
+                  <th className="px-3 py-2 font-medium">Issuer</th>
+                  <th className="px-3 py-2 font-medium">Ticker</th>
+                  <th className="px-3 py-2 font-medium text-right">Shares</th>
+                  <th className="px-3 py-2 font-medium text-right">Price</th>
+                  <th className="px-3 py-2 font-medium text-right">Value</th>
+                  <th className="px-3 py-2 font-medium">Link</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-neutral-800">
+                {notableSales.map((e, i) => {
+                  const value = (e.shares ?? 0) * (e.price ?? 0);
+                  return (
+                  <tr key={`${e.filing_id}-${i}`} className="hover:bg-neutral-900/50">
+                    <td className="px-3 py-2 text-neutral-300 whitespace-nowrap">
+                      <span title={e.transaction_date}>{daysAgo(e.transaction_date)}</span>
+                    </td>
+                    <td className="px-3 py-2 text-neutral-300">{e.reporter_name ?? "—"}</td>
+                    <td className="px-3 py-2 text-neutral-300">{e.issuer_name ?? "—"}</td>
+                    <td className="px-3 py-2 text-neutral-200 font-mono">{e.ticker ?? "—"}</td>
+                    <td className="px-3 py-2 text-right text-neutral-300 tabular-nums">{fmtShares(e.shares)}</td>
+                    <td className="px-3 py-2 text-right text-neutral-300 tabular-nums">
+                      {e.price != null ? `$${e.price.toFixed(2)}` : "—"}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      <span className={value >= 50_000_000 ? "text-red-300" : "text-red-400/70"}>
+                        ${value >= 1e9 ? `${(value/1e9).toFixed(1)}B` : value >= 1e6 ? `${(value/1e6).toFixed(0)}M` : `${(value/1e3).toFixed(0)}K`}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2">
+                      {e.primary_doc_url ? (
+                        <a href={e.primary_doc_url} target="_blank" rel="noreferrer" className="text-blue-400 hover:underline">sec.gov ↗</a>
+                      ) : <span className="text-neutral-600">—</span>}
+                    </td>
+                  </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
