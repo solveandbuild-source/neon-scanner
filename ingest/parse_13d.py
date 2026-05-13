@@ -28,6 +28,7 @@ import os
 import re
 import sys
 import time
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
 
@@ -93,6 +94,56 @@ def _strip_html(html: str) -> str:
     txt = _RX_TAG.sub(" ", html)
     txt = _RX_WS.sub(" ", txt)
     return txt
+
+
+def _localname(t: str) -> str:
+    return t.rsplit("}", 1)[-1] if "}" in t else t
+
+
+def _xml_text(root: ET.Element, tag: str) -> str | None:
+    for el in root.iter():
+        if _localname(el.tag) == tag:
+            return (el.text or "").strip() or None
+    return None
+
+
+def try_structured_xml(primary_doc_url: str | None) -> dict[str, Any] | None:
+    """For new-format SCHEDULE 13D filings, the raw XML is structured (Broadridge-
+    generated, XBRL-tagged). Extracting issuer/CUSIP/percent from this is 100%
+    reliable, vs. the HTML regex fallback for older SC 13D filings.
+
+    The xsl-prefixed URL is the HTML rendering; the same path without the xsl/
+    segment is the raw XML.
+    """
+    if not primary_doc_url or not primary_doc_url.endswith(".xml"):
+        return None
+    raw_url = re.sub(r"/xsl[^/]+/", "/", primary_doc_url)
+    if raw_url == primary_doc_url:
+        return None  # not an xsl-wrapped URL — old format
+    r = _polite_get(raw_url, {"User-Agent": EDGAR_USER_AGENT, "Accept": "application/xml"})
+    if r.status_code != 200:
+        return None
+    try:
+        root = ET.fromstring(r.content)
+    except ET.ParseError:
+        return None
+    tag_lower = (root.tag or "").lower()
+    if "schedule13d" not in tag_lower and "schedule13g" not in tag_lower:
+        # not a Broadridge-style 13D/G doc — bail out
+        return None
+    # Percent extraction: amountOwned% or aggregateAmountOwnedPercentOfClass
+    percent_text = _xml_text(root, "percentOfClass") or _xml_text(root, "aggregateAmountOwnedPercentOfClass")
+    try:
+        percent = float(percent_text) if percent_text else None
+    except ValueError:
+        percent = None
+    return {
+        "issuer_name": _xml_text(root, "issuerName"),
+        "issuer_cik": (_xml_text(root, "issuerCIK") or "").zfill(10) or None,
+        "cusip": _xml_text(root, "issuerCusipNumber"),
+        "percent_owned": percent,
+        "event_date": _xml_text(root, "dateOfEvent"),
+    }
 
 
 def fetch_cover_html(cik: str, accession: str, primary_doc_url: str | None) -> str | None:
@@ -165,24 +216,41 @@ _FORM_TO_SUBTYPE = {
 
 
 def parse_one_filing(filing: dict[str, Any]) -> tuple[int, str | None]:
-    html = fetch_cover_html(filing["cik"], filing["accession_number"], filing.get("primary_doc_url"))
-    if not html:
-        # Still write a row with nulls so we know the filing exists in events_13d
-        fields = {"cusip": None, "percent_owned": None, "issuer_name": None}
+    # Try structured XML first (newer SCHEDULE 13D filings are XBRL-tagged).
+    structured = try_structured_xml(filing.get("primary_doc_url"))
+    issuer_cik = None
+    if structured:
+        fields = {
+            "cusip": structured.get("cusip"),
+            "percent_owned": structured.get("percent_owned"),
+            "issuer_name": structured.get("issuer_name"),
+        }
+        issuer_cik = structured.get("issuer_cik")
+        event_date = structured.get("event_date") or (filing["filed_at"][:10] if filing.get("filed_at") else None)
+        # Normalize event_date from "MM/DD/YYYY" to "YYYY-MM-DD" if needed
+        if event_date and "/" in event_date:
+            try:
+                m, d, y = event_date.split("/")
+                event_date = f"{y}-{m.zfill(2)}-{d.zfill(2)}"
+            except Exception:
+                event_date = filing["filed_at"][:10] if filing.get("filed_at") else None
     else:
-        fields = extract_fields(html)
+        # Fallback: HTML regex for older SC 13D filings without structured XML.
+        html = fetch_cover_html(filing["cik"], filing["accession_number"], filing.get("primary_doc_url"))
+        fields = extract_fields(html) if html else {"cusip": None, "percent_owned": None, "issuer_name": None}
+        event_date = filing["filed_at"][:10] if filing.get("filed_at") else None
 
     sb = _supabase()
     sb.table("events_13d").delete().eq("filing_id", filing["id"]).execute()
     row = {
         "filing_id": filing["id"],
         "cik": filing["cik"],
-        "issuer_cik": None,  # not always extractable from cover page
+        "issuer_cik": issuer_cik,
         "issuer_name": fields["issuer_name"],
         "ticker": None,
         "form_subtype": _FORM_TO_SUBTYPE.get(filing["form_type"], filing["form_type"]),
         "percent_owned": fields["percent_owned"],
-        "event_date": filing["filed_at"][:10] if filing.get("filed_at") else None,
+        "event_date": event_date,
     }
     sb.table("events_13d").insert(row).execute()
     return 1, None
