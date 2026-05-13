@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 import time
 import xml.etree.ElementTree as ET
@@ -100,12 +101,25 @@ def _text_of(elem: ET.Element | None, *path: str) -> str | None:
 
 
 def fetch_form4_xml(cik: str, accession: str, primary_doc_url: str | None) -> bytes | None:
-    """Try the stored primary_doc_url first; fall back to index.json to find XML."""
-    # Most Form 4s have a structured XML as primary doc — fast path.
+    """Fetch the RAW Form 4 XML (not the HTML-rendered version).
+
+    EDGAR's primaryDocument for Form 4 typically points to a stylesheet-
+    transformed HTML version at a path like
+        .../<accession>/xslF345X06/ownership.xml
+    The same filename exists at the parent directory as the actual XML:
+        .../<accession>/ownership.xml
+    """
+    # Strip any xsl* directory segment to get the raw XML path.
     if primary_doc_url and primary_doc_url.endswith(".xml"):
-        r = _polite_get(primary_doc_url, HEADERS_XML)
-        if r.status_code == 200:
+        raw_url = re.sub(r"/xsl[^/]+/", "/", primary_doc_url)
+        r = _polite_get(raw_url, HEADERS_XML)
+        if r.status_code == 200 and b"<ownershipDocument" in r.content[:500]:
             return r.content
+        # Some older Form 4s don't use the xsl wrapper — try the original URL.
+        if raw_url != primary_doc_url:
+            r = _polite_get(primary_doc_url, HEADERS_XML)
+            if r.status_code == 200 and b"<ownershipDocument" in r.content[:500]:
+                return r.content
     # Fallback: index.json → find the form4 XML
     acc_nodash = accession.replace("-", "")
     cik_int = int(cik)
@@ -114,7 +128,7 @@ def fetch_form4_xml(cik: str, accession: str, primary_doc_url: str | None) -> by
     if r.status_code != 200:
         return None
     files = r.json().get("directory", {}).get("item", [])
-    xmls = [f["name"] for f in files if f["name"].endswith(".xml")]
+    xmls = [f["name"] for f in files if f["name"].endswith(".xml") and "/" not in f["name"]]
     if not xmls:
         return None
     pick = next(
