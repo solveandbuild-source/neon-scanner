@@ -137,6 +137,7 @@ type Event8K = {
   filed_at: string;
   items: string;  // comma-separated like "1.01,9.01"
   primary_doc_url: string | null;
+  summary: string | null;  // LLM-generated one-sentence headline
 };
 
 // 8-K item-number → plain-English label
@@ -167,7 +168,7 @@ async function fetch8Ks(): Promise<Event8K[]> {
   const sb = supabaseServer();
   const { data, error } = await sb
     .from("filings_raw")
-    .select("accession_number,cik,filer_name,filed_at,primary_doc_url,raw_payload")
+    .select("accession_number,cik,filer_name,filed_at,primary_doc_url,raw_payload,summary")
     .in("form_type", ["8-K", "8-K/A"])
     .order("filed_at", { ascending: false })
     .limit(60);
@@ -179,6 +180,7 @@ async function fetch8Ks(): Promise<Event8K[]> {
     filed_at: r.filed_at,
     items: r.raw_payload?.items ?? "",
     primary_doc_url: r.primary_doc_url,
+    summary: r.summary ?? null,
   }));
 }
 
@@ -410,7 +412,7 @@ export default async function EventsPage() {
                 <tr>
                   <th className="px-3 py-2 font-medium">Filed</th>
                   <th className="px-3 py-2 font-medium">Filer</th>
-                  <th className="px-3 py-2 font-medium">What happened (items)</th>
+                  <th className="px-3 py-2 font-medium">What happened</th>
                   <th className="px-3 py-2 font-medium">Link</th>
                 </tr>
               </thead>
@@ -421,10 +423,10 @@ export default async function EventsPage() {
                   const desc = describeItems(e.items);
                   return (
                     <tr key={e.accession_number} className={`hover:bg-neutral-900/50 ${tierBorderClass(t)}`}>
-                      <td className="px-3 py-2 text-neutral-300 whitespace-nowrap">
+                      <td className="px-3 py-2 text-neutral-300 whitespace-nowrap align-top">
                         <span title={e.filed_at.slice(0, 10)}>{daysAgo(e.filed_at)}</span>
                       </td>
-                      <td className="px-3 py-2">
+                      <td className="px-3 py-2 align-top">
                         <div className="text-neutral-200">{info?.entity ?? e.filer_name ?? e.cik}</div>
                         {info?.manager && (
                           <div className="text-xs text-neutral-500">{info.manager} · {info.category}</div>
@@ -433,18 +435,25 @@ export default async function EventsPage() {
                           <div className="text-xs text-neutral-500">{info.category}</div>
                         )}
                       </td>
-                      <td className="px-3 py-2">
-                        <ul className="space-y-0.5">
-                          {desc.labels.map((label, i) => (
-                            <li key={i} className="text-xs text-neutral-300">
-                              <span className={ITEM_PRIORITY.has(label.split(" ")[0]) ? "text-emerald-300" : "text-neutral-400"}>
-                                {label}
+                      <td className="px-3 py-2 align-top max-w-xl">
+                        {e.summary ? (
+                          <div className="text-sm text-neutral-200">{e.summary}</div>
+                        ) : (
+                          <div className="text-sm text-neutral-500 italic">Summary pending — see items below.</div>
+                        )}
+                        <div className="mt-1 text-xs text-neutral-500">
+                          Items: {desc.labels.map((label, i) => {
+                            const code = label.split(" ")[0];
+                            return (
+                              <span key={i}>
+                                {i > 0 && " · "}
+                                <span className={ITEM_PRIORITY.has(code) ? "text-emerald-400/80" : ""} title={label}>{code}</span>
                               </span>
-                            </li>
-                          ))}
-                        </ul>
+                            );
+                          })}
+                        </div>
                       </td>
-                      <td className="px-3 py-2">
+                      <td className="px-3 py-2 align-top">
                         {e.primary_doc_url ? (
                           <a href={e.primary_doc_url} target="_blank" rel="noreferrer" className="text-blue-400 hover:underline">sec.gov ↗</a>
                         ) : <span className="text-neutral-600">—</span>}
