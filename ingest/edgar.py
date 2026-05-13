@@ -39,6 +39,15 @@ EDGAR_HEADERS = {"User-Agent": EDGAR_USER_AGENT, "Accept": "application/json"}
 
 FILERS_PATH = PROJECT_ROOT / "config" / "tracked_filers.yml"
 
+# Rolling 3-year retention. EDGAR's submissions endpoint returns up to ~1000
+# recent filings, which for many filers stretches back 20+ years. We don't
+# need that — signal extraction works off the last 1–3 years. Anything older
+# is dropped at ingest time; the cleanup script (scripts/cleanup_old.py)
+# handles any backfilled historical rows.
+import datetime as _dt
+RETENTION_YEARS = 3
+MIN_FILED_DATE = (_dt.date.today() - _dt.timedelta(days=RETENTION_YEARS * 365)).isoformat()
+
 # Forms we care about. Anything else returned by EDGAR is ignored at this layer.
 TRACKED_FORM_TYPES = {
     "13F-HR", "13F-HR/A",
@@ -120,6 +129,9 @@ def extract_filing_rows(submissions: dict[str, Any]) -> list[dict[str, Any]]:
     for i in range(n):
         form = recent["form"][i]
         if form not in TRACKED_FORM_TYPES:
+            continue
+        # 3-year retention cutoff — anything older is skipped at ingest.
+        if recent["filingDate"][i] < MIN_FILED_DATE:
             continue
         # 8-K item-number gate: drop noise like auditor changes, routine governance.
         if form in ("8-K", "8-K/A"):
