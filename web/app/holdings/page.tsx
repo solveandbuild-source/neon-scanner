@@ -1,5 +1,6 @@
 import { supabaseServer } from "@/lib/supabase";
 import { filerInfo, tier } from "@/lib/filers";
+import { daysAgo } from "@/lib/format";
 
 // Holdings view: per-filer most recent 13F snapshot, with top positions by value.
 // This is *plumbing inspection*, not signal generation — confluence scoring
@@ -9,6 +10,7 @@ type Holding = {
   cik: string;
   filer_name: string | null;
   period_of_report: string;
+  filed_at: string;  // when the 13F was actually filed (≠ period_of_report)
   cusip: string;
   issuer_name: string | null;
   shares: number | null;
@@ -25,17 +27,18 @@ async function fetchHoldings(): Promise<{ filers: FilerSummary[]; total: number 
     const { data, error } = await sb
       .from("holdings_13f")
       .select(
-        "cik,period_of_report,cusip,issuer_name,shares,value_usd,filings_raw!inner(filer_name)",
+        "cik,period_of_report,cusip,issuer_name,shares,value_usd,filings_raw!inner(filer_name,filed_at)",
       )
       .order("period_of_report", { ascending: false })
       .range(from, from + page - 1);
     if (error) throw error;
     if (!data || data.length === 0) break;
-    for (const r of data as unknown as Array<Holding & { filings_raw: { filer_name: string | null } }>) {
+    for (const r of data as unknown as Array<Holding & { filings_raw: { filer_name: string | null; filed_at: string } }>) {
       out.push({
         cik: r.cik,
         filer_name: r.filings_raw?.filer_name ?? null,
         period_of_report: r.period_of_report,
+        filed_at: r.filings_raw?.filed_at ?? "",
         cusip: r.cusip,
         issuer_name: r.issuer_name,
         shares: r.shares,
@@ -57,24 +60,26 @@ async function fetchHoldings(): Promise<{ filers: FilerSummary[]; total: number 
         cik: h.cik,
         name: h.filer_name ?? h.cik,
         latestPeriod: h.period_of_report,
+        latestFiledAt: h.filed_at,
         positions: [h],
       });
     } else if (h.period_of_report > cur.latestPeriod) {
-      // newer period — replace
       cur.latestPeriod = h.period_of_report;
+      cur.latestFiledAt = h.filed_at;
       cur.positions = [h];
     } else if (h.period_of_report === cur.latestPeriod) {
       cur.positions.push(h);
     }
-    // older periods ignored
   }
-  // sort each filer's positions by value desc, keep top 10
   for (const f of byFiler.values()) {
     f.positions.sort((a, b) => (b.value_usd ?? 0) - (a.value_usd ?? 0));
     f.positions = f.positions.slice(0, 10);
   }
-  // sort filers by name
-  const filers = Array.from(byFiler.values()).sort((a, b) => a.name.localeCompare(b.name));
+  // Sort filers by RECENCY of latest filing (newest first) so freshly-updated
+  // filers float to the top of the page.
+  const filers = Array.from(byFiler.values()).sort(
+    (a, b) => b.latestFiledAt.localeCompare(a.latestFiledAt),
+  );
   return { filers, total: out.length };
 }
 
@@ -82,6 +87,7 @@ type FilerSummary = {
   cik: string;
   name: string;
   latestPeriod: string;
+  latestFiledAt: string;
   positions: Holding[];
 };
 
@@ -121,32 +127,52 @@ export default async function HoldingsPage() {
           Showing each filer&apos;s 10 largest positions in their most-recent 13F.
         </p>
         <p className="mt-2 text-xs text-neutral-500">
-          Source: SEC 13F-HR filings (45-day lag). Ticker column not yet
-          populated — only CUSIP + issuer name available.
+          Each card shows the filer&apos;s top 10 positions in their latest 13F. Sorted by filing recency (newest at the top). 13Fs have a 45-day legal disclosure delay — the gap between &quot;period&quot; and &quot;filed&quot; is that delay.
         </p>
       </header>
 
-      <p className="text-xs text-neutral-500">
-        <span className="inline-block w-2 h-2 align-middle mr-1 bg-amber-500"></span> activist filer ·
-        <span className="inline-block w-2 h-2 align-middle mx-1 bg-sky-500"></span> corporate strategic ·
-        plain border = value / growth / concentrated.
-      </p>
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-neutral-500">
+        <span>
+          <span className="inline-block w-2 h-2 align-middle mr-1 bg-amber-500"></span>activist filer
+        </span>
+        <span>
+          <span className="inline-block w-2 h-2 align-middle mr-1 bg-sky-500"></span>corporate strategic
+        </span>
+        <span><span className="text-emerald-400">filed &lt;14d ago</span> = fresh</span>
+        <span><span className="text-red-400">filed &gt;120d ago</span> = stale</span>
+      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {filers.map((f) => {
           const info = filerInfo(f.cik);
           const t = tier(f.cik);
           const borderL = t === 2 ? "border-l-amber-500" : t === 1 ? "border-l-sky-500" : "border-l-neutral-800";
+
+          // Recency badge: fresh = filed within 14 days, stale = filed >90 days ago.
+          const filedDate = f.latestFiledAt ? new Date(f.latestFiledAt) : null;
+          const daysSinceFile = filedDate ? Math.floor((Date.now() - filedDate.getTime()) / 86400000) : null;
+          let recencyClass = "text-neutral-500";
+          if (daysSinceFile != null) {
+            if (daysSinceFile <= 14) recencyClass = "text-emerald-400";
+            else if (daysSinceFile <= 60) recencyClass = "text-neutral-300";
+            else if (daysSinceFile > 120) recencyClass = "text-red-400";
+          }
+
           return (
           <div key={f.cik} className={`rounded-md border border-neutral-800 border-l-2 ${borderL} overflow-hidden`}>
             <div className="px-3 py-2 bg-neutral-900 flex items-baseline justify-between gap-2">
-              <div>
+              <div className="min-w-0">
                 <div className="font-medium text-neutral-100 truncate" title={f.name}>{info?.entity ?? f.name}</div>
                 {info?.manager && (
                   <div className="text-xs text-neutral-500">{info.manager} · {info.category}</div>
                 )}
               </div>
-              <div className="text-xs text-neutral-500 tabular-nums">period {f.latestPeriod}</div>
+              <div className="text-right shrink-0">
+                <div className={`text-xs tabular-nums ${recencyClass}`}>
+                  filed {daysSinceFile != null ? daysAgo(f.latestFiledAt) : "?"}
+                </div>
+                <div className="text-[10px] text-neutral-500 tabular-nums">period {f.latestPeriod}</div>
+              </div>
             </div>
             <table className="w-full text-xs">
               <thead className="text-neutral-500">
