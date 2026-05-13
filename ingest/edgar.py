@@ -49,10 +49,14 @@ RETENTION_YEARS = 3
 MIN_FILED_DATE = (_dt.date.today() - _dt.timedelta(days=RETENTION_YEARS * 365)).isoformat()
 
 # Forms we care about. Anything else returned by EDGAR is ignored at this layer.
+# Note: EDGAR uses TWO form-type strings for Schedule 13D/G filings depending
+# on filing date — older filings use "SC 13D", newer ones (post-late-2024)
+# use "SCHEDULE 13D". We accept both so the transition doesn't silently
+# drop filings.
 TRACKED_FORM_TYPES = {
     "13F-HR", "13F-HR/A",
-    "SC 13D", "SC 13D/A",
-    "SC 13G", "SC 13G/A",
+    "SC 13D", "SC 13D/A", "SCHEDULE 13D", "SCHEDULE 13D/A",
+    "SC 13G", "SC 13G/A", "SCHEDULE 13G", "SCHEDULE 13G/A",
     "4", "4/A",
     "8-K", "8-K/A",
 }

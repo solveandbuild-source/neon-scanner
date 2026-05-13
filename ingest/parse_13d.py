@@ -155,6 +155,12 @@ _FORM_TO_SUBTYPE = {
     "SC 13D/A": "13D/A",
     "SC 13G": "13G",
     "SC 13G/A": "13G/A",
+    # EDGAR migrated to these strings in late 2024 — same semantic forms,
+    # different label. Map both to the same normalized subtype.
+    "SCHEDULE 13D": "13D",
+    "SCHEDULE 13D/A": "13D/A",
+    "SCHEDULE 13G": "13G",
+    "SCHEDULE 13G/A": "13G/A",
 }
 
 
@@ -189,7 +195,10 @@ def get_unparsed(sb: Client, reparse: bool = False) -> list[dict[str, Any]]:
         b = (
             sb.table("filings_raw")
             .select("id,accession_number,cik,form_type,filer_name,filed_at,primary_doc_url")
-            .in_("form_type", ["SC 13D", "SC 13D/A", "SC 13G", "SC 13G/A"])
+            .in_("form_type", [
+                "SC 13D", "SC 13D/A", "SC 13G", "SC 13G/A",
+                "SCHEDULE 13D", "SCHEDULE 13D/A", "SCHEDULE 13G", "SCHEDULE 13G/A",
+            ])
             .order("filed_at", desc=True)
             .range(offset, offset + 999)
             .execute()
