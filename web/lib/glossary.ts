@@ -12,7 +12,7 @@ export type GlossaryEntry = {
 export const FORMS: Record<string, GlossaryEntry> = {
   "13F-HR": {
     term: "Form 13F",
-    short: "A snapshot of what a big fund owns. Updated quarterly, but you see it 45 days late.",
+    short: "Fund's quarterly holdings. 45-day lag.",
     meaning:
       "Every fund managing more than $100M of US stocks has to publish their full portfolio every 3 months. Catch: the disclosure comes 45 days AFTER quarter-end. So Buffett's March holdings only become public around May 15. You use this to see who holds what, and especially to spot when multiple smart funds independently piled into the same stock in the same quarter — that's the strongest pattern 13Fs surface. Don't use it to react in real time; the data is always 1-3 months old.",
     example:
@@ -20,13 +20,13 @@ export const FORMS: Record<string, GlossaryEntry> = {
   },
   "13F-HR/A": {
     term: "Form 13F amendment",
-    short: "Fund is correcting or updating a previously-filed 13F. Usually a paperwork fix, not new info.",
+    short: "Correction to a prior 13F.",
     meaning:
       "Same as 13F-HR but it's a correction of an earlier filing. Usually low signal — fixes typos, restates a position, adjusts for splits. Rarely changes what the fund actually owns.",
   },
   "SC 13D": {
     term: "Schedule 13D",
-    short: "An activist bought >5% of a company AND plans to push for changes. The single highest-signal event in the system.",
+    short: "Activist took 5%+ stake. Highest signal.",
     meaning:
       "When any investor crosses 5% ownership of a US public company AND has intent to influence (push for CEO change, sale, breakup, capital return), they MUST file 13D within 10 days. Why this matters more than anything else here: (1) it's FRESH — 10 days, not 45, (2) it's a BIG bet — 5%+ is real money, (3) it's INTENTIONAL — the activist publicly commits in Item 4 to what they want to do. If Ackman files a 13D on a stock you've never heard of, that's worth investigating.",
     example:
@@ -34,7 +34,7 @@ export const FORMS: Record<string, GlossaryEntry> = {
   },
   "SCHEDULE 13D": {
     term: "Schedule 13D",
-    short: "An activist bought >5% AND plans to push for changes. Highest-signal event in the system.",
+    short: "Activist took 5%+ stake. Highest signal.",
     meaning:
       "Same as 'SC 13D' above — EDGAR just relabeled the form-type string in late 2024.",
     example:
@@ -42,7 +42,7 @@ export const FORMS: Record<string, GlossaryEntry> = {
   },
   "SC 13D/A": {
     term: "Schedule 13D amendment",
-    short: "Update to a prior 13D. Either the activist's stake changed, their intent changed, or they exited.",
+    short: "Update to a prior 13D filing.",
     meaning:
       "Activists file 13D amendments whenever their position size moves meaningfully, when their goals shift, or when they exit. The Direction column tells you which: INCREASE (they're building), DECREASE (trimming/exiting), AMEND (admin update). Reading the amendment vs. prior tells you their conviction trajectory.",
     example:
@@ -50,13 +50,13 @@ export const FORMS: Record<string, GlossaryEntry> = {
   },
   "SCHEDULE 13D/A": {
     term: "Schedule 13D amendment",
-    short: "Update to a prior 13D. Stake changed, intent changed, or they exited.",
+    short: "Update to a prior 13D filing.",
     meaning:
       "Same as 'SC 13D/A' — newer EDGAR label.",
   },
   "SC 13G": {
     term: "Schedule 13G",
-    short: "Crossed 5% but as a PASSIVE holder — disclaiming any intent to influence. Lower signal than 13D.",
+    short: "Passive 5%+ stake. Lower signal.",
     meaning:
       "Same 5% threshold as 13D, but 13G filers explicitly say 'we have no intent to influence the company.' Usually filed by index funds (Vanguard, BlackRock, State Street) whose ownership is automatic — mechanical index buying, not a high-conviction bet. Treat as background data, not a signal.",
     example:
@@ -69,18 +69,18 @@ export const FORMS: Record<string, GlossaryEntry> = {
   },
   "SC 13G/A": {
     term: "Schedule 13G amendment",
-    short: "Routine update to a 13G. Usually just annual confirmation. Low signal.",
+    short: "Routine update to a 13G.",
     meaning:
       "Updates to a 13G are usually annual rebalancing or share-count adjustments. Mostly noise.",
   },
   "SCHEDULE 13G/A": {
     term: "Schedule 13G amendment",
-    short: "Routine update to a 13G. Low signal.",
+    short: "Routine update to a 13G.",
     meaning: "Same as 'SC 13G/A' — newer EDGAR label.",
   },
   "4": {
     term: "Form 4",
-    short: "An insider (CEO, CFO, director) bought or sold their own company's stock. Filed within 2 business days — the FRESHEST data we get.",
+    short: "Insider bought/sold own company stock.",
     meaning:
       "When a corporate insider — the CEO, CFO, directors, or any 10%+ owner — buys or sells their own company's stock, they must disclose within 2 business days. The signal is INSIDER BUYS specifically (transaction code 'P'). Sales are noisy — they happen for many reasons (taxes, diversification, lifestyle, scheduled 10b5-1 plans). Buys are different — people only buy their own stock if they think it's going up. Multiple insiders buying in a tight window ('cluster') is one of the strongest small-cap signals there is.",
     example:
@@ -88,13 +88,13 @@ export const FORMS: Record<string, GlossaryEntry> = {
   },
   "4/A": {
     term: "Form 4 amendment",
-    short: "Correction to a previous Form 4. Usually a typo fix.",
+    short: "Correction to a prior Form 4.",
     meaning:
       "Amendment to a previously-filed Form 4. Usually clerical — fixes a wrong share count or trade date.",
   },
   "8-K": {
     term: "Form 8-K",
-    short: "Something material happened that the company has to disclose within 4 business days — M&A, leadership changes, big contracts, strategic investments.",
+    short: "Material event: M&A, leadership change, contract, etc.",
     meaning:
       "8-K is the 'something happened' filing. Companies must disclose any material event within 4 business days. The form has numbered 'items' that tell you WHAT happened: 1.01 = material agreement (often M&A or partnerships), 2.01 = completed acquisition, 5.02 = CEO/CFO/director change, 8.01 = other material events. Most 8-Ks are routine (auditor changes, etc.); we filter to the items that carry real signal. When NVIDIA invests $5B in Intel, that shows up here. When a company announces a big buyback, here. When a CEO suddenly resigns, here.",
     example:
@@ -102,7 +102,7 @@ export const FORMS: Record<string, GlossaryEntry> = {
   },
   "8-K/A": {
     term: "Form 8-K amendment",
-    short: "Update or correction to a previously-filed 8-K.",
+    short: "Update to a prior 8-K.",
     meaning:
       "Amendment to an 8-K. Often adds details that weren't ready in the original filing (e.g., the original announced an acquisition; the amendment adds the financial statements).",
   },

@@ -2,6 +2,7 @@ import { supabaseServer } from "@/lib/supabase";
 import { daysAgo } from "@/lib/format";
 import { filerInfo, tier } from "@/lib/filers";
 import { FORMS } from "@/lib/glossary";
+import { FormTooltip } from "@/components/FormTooltip";
 import Link from "next/link";
 
 // Events: activist stake disclosures (13D/G) + insider purchases (Form 4 'P').
@@ -300,12 +301,7 @@ export default async function EventsPage() {
                         )}
                       </td>
                       <td className="px-3 py-2 text-neutral-300">
-                        <span
-                          className="underline decoration-dotted decoration-neutral-600 cursor-help"
-                          title={FORMS["SCHEDULE " + e.form_subtype]?.short ?? FORMS["SC " + e.form_subtype]?.short ?? e.form_subtype}
-                        >
-                          {e.form_subtype}
-                        </span>
+                        <FormTooltip term={e.form_subtype} />
                       </td>
                       <td className="px-3 py-2 text-neutral-300">{e.issuer_name ?? "—"}</td>
                       <td className="px-3 py-2 text-right text-neutral-300 tabular-nums">

@@ -1,5 +1,6 @@
 import { supabaseServer } from "@/lib/supabase";
-import { formLabel, shortDate, daysAgo } from "@/lib/format";
+import { shortDate, daysAgo } from "@/lib/format";
+import { FormTooltip } from "@/components/FormTooltip";
 
 type Filing = {
   accession_number: string;
@@ -105,7 +106,9 @@ export default async function FilingsPage() {
                     <span title={shortDate(f.filed_at)}>{daysAgo(f.filed_at)}</span>
                   </td>
                   <td className="px-3 py-2 text-neutral-200">{f.filer_name ?? f.cik}</td>
-                  <td className="px-3 py-2 text-neutral-300">{formLabel(f.form_type)}</td>
+                  <td className="px-3 py-2 text-neutral-300">
+                    <FormTooltip term={f.form_type} />
+                  </td>
                   <td className="px-3 py-2 text-neutral-500">{f.period_of_report ?? "—"}</td>
                   <td className="px-3 py-2">
                     {f.primary_doc_url ? (
@@ -153,7 +156,7 @@ export default async function FilingsPage() {
               </div>
               <div className="mt-2 text-xs text-neutral-500">
                 Last filed {daysAgo(f.mostRecent.filed_at)} —{" "}
-                <span className="text-neutral-400">{formLabel(f.mostRecent.form_type)}</span>
+                <span className="text-neutral-400">{f.mostRecent.form_type}</span>
               </div>
             </div>
           ))}

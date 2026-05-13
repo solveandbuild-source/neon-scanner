@@ -26,8 +26,10 @@ function Section({
         {description && <p className="mt-1 text-sm text-neutral-400">{description}</p>}
       </div>
       <div className="space-y-3">
-        {entries.map((e) => (
-          <div key={e.term} className="rounded-md border border-neutral-800 p-3">
+        {entries.map((e) => {
+          const slug = e.term.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+          return (
+          <div key={e.term} id={slug} className="rounded-md border border-neutral-800 p-3 scroll-mt-20 target:border-blue-500/60">
             <div className="text-sm font-semibold text-neutral-100">{e.term}</div>
             <div className="mt-1 text-xs italic text-neutral-400">{e.short}</div>
             <div className="mt-2 text-sm text-neutral-300 leading-relaxed">{e.meaning}</div>
@@ -37,7 +39,8 @@ function Section({
               </div>
             )}
           </div>
-        ))}
+          );
+        })}
       </div>
     </section>
   );
