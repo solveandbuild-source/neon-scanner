@@ -1,6 +1,8 @@
 import { supabaseServer } from "@/lib/supabase";
 import { daysAgo } from "@/lib/format";
 import { filerInfo, tier } from "@/lib/filers";
+import { FORMS } from "@/lib/glossary";
+import Link from "next/link";
 
 // Events: activist stake disclosures (13D/G) + insider purchases (Form 4 'P').
 // With manager column, direction column (NEW/INCREASE/DECREASE/AMEND), and
@@ -189,13 +191,19 @@ export default async function EventsPage() {
         <h1 className="text-2xl font-semibold tracking-tight">Events</h1>
         <p className="mt-1 text-sm text-neutral-400">
           Activist stake disclosures (13D/G) and tracked-filer insider purchases (Form 4 code &quot;P&quot;).
+          New here? Read the <Link href="/learn" className="text-blue-400 hover:underline">glossary</Link>.
         </p>
-        <p className="mt-2 text-xs text-neutral-500">
-          <span className="inline-block w-2 h-2 align-middle mr-1 bg-amber-500"></span> activist filer ·
-          <span className="inline-block w-2 h-2 align-middle mx-1 bg-sky-500"></span> corporate strategic ·
-          plain bar = value / growth / concentrated.
-          Direction compares each filing to the same filer&apos;s previous filing on the same issuer.
-        </p>
+        <div className="mt-3 flex flex-col gap-1 text-xs text-neutral-500">
+          <div>
+            <span className="text-neutral-400 font-medium">Colored bar on left edge of row:</span>
+            <span className="inline-block w-2 h-3 align-middle mx-2 bg-amber-500"></span>activist
+            <span className="inline-block w-2 h-3 align-middle mx-2 bg-sky-500"></span>corporate strategic
+            <span className="inline-block w-2 h-3 align-middle mx-2 bg-neutral-700"></span>value / growth / concentrated (baseline)
+          </div>
+          <div>
+            <span className="text-neutral-400 font-medium">Direction column:</span> compares each filing&apos;s % ownership against the same filer&apos;s previous filing on the same company. NEW = no prior filing; AMEND = % unchanged.
+          </div>
+        </div>
       </header>
 
       <section>
@@ -235,7 +243,14 @@ export default async function EventsPage() {
                           </div>
                         )}
                       </td>
-                      <td className="px-3 py-2 text-neutral-300">{e.form_subtype}</td>
+                      <td className="px-3 py-2 text-neutral-300">
+                        <span
+                          className="underline decoration-dotted decoration-neutral-600 cursor-help"
+                          title={FORMS["SCHEDULE " + e.form_subtype]?.short ?? FORMS["SC " + e.form_subtype]?.short ?? e.form_subtype}
+                        >
+                          {e.form_subtype}
+                        </span>
+                      </td>
                       <td className="px-3 py-2 text-neutral-300">{e.issuer_name ?? "—"}</td>
                       <td className="px-3 py-2 text-right text-neutral-300 tabular-nums">
                         {e.percent_owned != null ? `${e.percent_owned.toFixed(1)}%` : "—"}
