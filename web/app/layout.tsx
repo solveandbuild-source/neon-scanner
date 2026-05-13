@@ -1,0 +1,36 @@
+import type { Metadata } from "next";
+import Link from "next/link";
+import { Geist, Geist_Mono } from "next/font/google";
+import "./globals.css";
+
+const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
+const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
+
+export const metadata: Metadata = {
+  title: "portfolio-scanner",
+  description:
+    "Signal extraction from SEC filings by 30 tracked investors. No FOMO, no narrative.",
+};
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="en" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
+      <body className="min-h-full flex flex-col bg-neutral-950 text-neutral-200">
+        <header className="border-b border-neutral-800 px-6 py-3 flex items-center gap-6">
+          <Link href="/" className="font-semibold tracking-tight">
+            portfolio-scanner
+          </Link>
+          <nav className="flex gap-4 text-sm text-neutral-400">
+            <Link href="/" className="hover:text-neutral-100">Filings</Link>
+            <Link href="/signals" className="hover:text-neutral-100">Signals</Link>
+            <Link href="/positions" className="hover:text-neutral-100">Positions</Link>
+          </nav>
+        </header>
+        <main className="flex-1 px-6 py-6">{children}</main>
+        <footer className="border-t border-neutral-800 px-6 py-3 text-xs text-neutral-500">
+          13F data is 45 days delayed by law. Filer intent is inferred, not stated. Read the filing.
+        </footer>
+      </body>
+    </html>
+  );
+}
