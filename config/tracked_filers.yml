@@ -1,14 +1,22 @@
-# Tracked filers — 30 fund managers + 10 corporate strategic investors.
+# Tracked filers — 28 fund managers + 10 corporate strategic investors.
 #
 # Categories:
 #   value                - long-horizon value/generalist managers
 #   concentrated         - high-conviction concentrated/contrarian books
-#   growth               - growth/tech books (mostly Tiger cubs + ARK)
+#   growth               - growth/tech books (Tiger cubs)
 #   activist             - 13D-filers who actively push for change; weighted heaviest
-#   macro                - macro / event-driven
 #   corporate_strategic  - public companies whose strategic investments are
 #                          signal-bearing (e.g. NVIDIA's $5B Intel stake).
 #                          They file 8-K, not 13F. See CLAUDE.md §6.0.
+#
+# History of curation decisions (so future-you doesn't re-add these):
+#   - ARK Investment Management (Wood) — dropped: originally included only
+#     for daily-trade CSV access (§6.0), which ARK has since restricted to
+#     email signup. Without daily granularity, the quarterly 13F adds little
+#     given their poor recent stock-picking record (sold NVDA before the AI run).
+#   - Hayman Capital Management (Bass) — dropped: 13F shows ~10% of book
+#     (he's mostly sovereign-macro/credit); recent macro calls have been
+#     wrong for years. Coverage too thin, signal too noisy.
 #
 # multiplier applies to ALL signals from this filer in the confluence scorer.
 # Per the user's stated rationale, activists are weighted heaviest because
@@ -118,16 +126,6 @@ filers:
     category: growth
     multiplier: 1.0
 
-  # NOTE: Cathie Wood / ARK is included specifically because she discloses
-  # ARK ETF holdings DAILY, not just quarterly. The ingest module should treat
-  # ARK as a special case: pull from ark-funds.com daily trade CSVs in addition
-  # to quarterly 13F. Do not collapse this back to 13F-only.
-  - name: "ARK Investment Management (Wood)"
-    cik: "0001697748"
-    category: growth
-    multiplier: 1.0
-    # special: see daily-disclosure note above
-
   # ─── activists (multiplier 2.0 — heaviest in scorer) ─────────────────────
   - name: "Pershing Square Capital Management (Ackman)"
     cik: "0001336528"
@@ -173,12 +171,6 @@ filers:
     cik: "0001817187"
     category: activist
     multiplier: 2.0
-
-  # ─── macro / event-driven (multiplier 1.0) ───────────────────────────────
-  - name: "Hayman Capital Management (Bass)"
-    cik: "0001420192"
-    category: macro
-    multiplier: 1.0
 
   # ─── corporate strategic investors (multiplier 1.5) ──────────────────────
   # These are public companies. They don't file 13F. Their strategic equity
@@ -241,6 +233,6 @@ filers:
 #   - Bridgewater (Dalio)    — too diversified; 13F signal poor
 #   - Renaissance Technologies — mostly stat-arb noise
 #   - Soros Fund Management  — mostly bonds/macro; 13Fs unrepresentative
-# Count: 40 active filers = 30 fund managers + 10 corporate strategic.
+# Count: 38 active filers = 28 fund managers + 10 corporate strategic.
 # If editing, keep the count and the rationale aligned.
 # ─────────────────────────────────────────────────────────────────────────

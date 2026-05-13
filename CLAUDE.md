@@ -118,15 +118,17 @@ There will be weeks where nothing surfaces. That is correct behavior. Do not add
 ## 6. Signal extraction
 
 ### 6.0 Filer curation logic (read before "completing" the list)
-The 30 filers in `config/tracked_filers.yml` are curated, not exhaustive. A filer is included only if their **13F is a representative window into their actual exposure**. Filers were deliberately excluded when this is not the case:
+The filers in `config/tracked_filers.yml` are curated, not exhaustive. A filer is included only if their **13F is a representative window into their actual exposure** AND their recent track record justifies treating their disclosures as signal rather than noise.
+
+**Pre-excluded** (do not re-add without re-justifying against the test above):
 
 - **Bridgewater (Dalio)** — book is too diversified; 13F-equity signal is poor.
 - **Renaissance Technologies** — mostly stat-arb; positions are noise, not theses.
 - **Soros Fund Management** — mostly bonds and macro; 13F is unrepresentative.
+- **ARK (Cathie Wood)** — was originally included because she disclosed ETF trades **daily**. ARK has since restricted that daily-CSV access (now email-signup only). Without the daily property, the quarterly 13F adds little given ARK's poor recent stock-picking record. The `tracked_corporate_investors` / 8-K path remains the right pattern for daily-granularity signals from companies; ARK's daily-fund path was a special case that no longer pencils out.
+- **Hayman Capital (Kyle Bass)** — 13F shows only ~10% of his book (mostly sovereign macro/credit); recent macro calls have been wrong for years. Coverage too thin, signal too noisy.
 
-If a future maintainer suggests adding a famous name, apply the same test before saying yes: *does their 13F-equity book reflect their thinking?* If no, exclude regardless of brand recognition.
-
-**ARK / Cathie Wood** is the inverse case: included specifically because she discloses ETF trades **daily**, not quarterly. The ingest module must treat ARK as a special case — pull daily trade CSVs from ark-funds.com in addition to (not instead of) the quarterly 13F. Do not collapse ARK back to 13F-only "to keep the pipeline uniform."
+If a future maintainer suggests adding a famous name, apply the same test before saying yes: *does their 13F-equity book reflect their thinking, and is their recent record good enough to treat as signal?* If no to either, exclude regardless of brand recognition.
 
 ### 6.1 13F-HR (45-day delay; surface this caveat in UI)
 - Diff each filer's current 13F vs prior. Emit `new_position`, `add`, `trim`, `exit`.

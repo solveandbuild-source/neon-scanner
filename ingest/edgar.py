@@ -14,9 +14,6 @@ Per CLAUDE.md:
   §2.6 — period_of_report is captured so the UI can compute and display
          the 13F 45-day delay caveat.
   §5   — ingest workers connect with SUPABASE_SECRET_KEY and bypass RLS.
-  §6.0 — ARK's daily disclosure path lives in a separate (future) module;
-         here we only fetch ARK's quarterly 13F via the standard path.
-         TODO(ARK-daily): pull ark-funds.com daily trade CSVs in ingest/ark.py.
 """
 from __future__ import annotations
 
@@ -230,11 +227,7 @@ def ingest_all_filers() -> None:
     for i, f in enumerate(actionable, 1):
         cik = f["cik"]
         name = f["name"]
-        if "ARK Investment" in name:
-            # §6.0 reminder: quarterly 13F only here; daily disclosures are TODO.
-            print(f"[{i}/{len(actionable)}] {name} (ARK: 13F only — daily CSVs are TODO)")
-        else:
-            print(f"[{i}/{len(actionable)}] {name}")
+        print(f"[{i}/{len(actionable)}] {name}")
         try:
             summary = ingest_filer(cik, name)
         except Exception as e:
