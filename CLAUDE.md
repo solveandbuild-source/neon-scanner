@@ -117,18 +117,23 @@ There will be weeks where nothing surfaces. That is correct behavior. Do not add
 
 ## 6. Signal extraction
 
-### 6.0 Filer curation logic (read before "completing" the list)
-The filers in `config/tracked_filers.yml` are curated, not exhaustive. A filer is included only if their **13F is a representative window into their actual exposure** AND their recent track record justifies treating their disclosures as signal rather than noise.
+### 6.0 Filer curation logic (read before adding or removing from the list)
 
-**Pre-excluded** (do not re-add without re-justifying against the test above):
+**Inclusion rule (revised):** include a filer if their 13F-disclosed positions are *thesis-driven* (a human deliberately chose them) — even if 13F only captures a small fraction of their total book. Use a per-filer `coverage_pct` annotation in `web/lib/filers.ts` to record what fraction is visible. Downstream scoring multiplies signal weight by `coverage_pct`, so a Bridgewater 13F-new contributes less than a Buffett one *without being silently dropped*.
 
-- **Bridgewater (Dalio)** — book is too diversified; 13F-equity signal is poor.
-- **Renaissance Technologies** — mostly stat-arb; positions are noise, not theses.
-- **Soros Fund Management** — mostly bonds and macro; 13F is unrepresentative.
-- **ARK (Cathie Wood)** — was originally included because she disclosed ETF trades **daily**. ARK has since restricted that daily-CSV access (now email-signup only). Without the daily property, the quarterly 13F adds little given ARK's poor recent stock-picking record. The `tracked_corporate_investors` / 8-K path remains the right pattern for daily-granularity signals from companies; ARK's daily-fund path was a special case that no longer pencils out.
-- **Hayman Capital (Kyle Bass)** — 13F shows only ~10% of his book (mostly sovereign macro/credit); recent macro calls have been wrong for years. Coverage too thin, signal too noisy.
+**Hard exclusion (just one):** filers whose disclosed positions are **algorithmic baskets, not thesis picks** — labeled `signal_class: algorithmic_basket`. No human at RenTech, Citadel's stat-arb desk, or pure market-makers said "this stock will go up." Their disclosed 13Fs are mechanical outputs of their strategies, not signals about individual companies.
 
-If a future maintainer suggests adding a famous name, apply the same test before saying yes: *does their 13F-equity book reflect their thinking, and is their recent record good enough to treat as signal?* If no to either, exclude regardless of brand recognition.
+**Curation history:**
+
+- **ARK (Wood)** — dropped: originally included only for the daily-trade CSV property, which ARK has since restricted. Without daily granularity the quarterly 13F adds little given recent stock-picking record.
+- **Renaissance Technologies** — excluded permanently: `algorithmic_basket`. Even at 100% coverage no human chose these positions individually.
+- **Citadel / Millennium / Two Sigma equity desks** — same exclusion class as RenTech.
+- **Bridgewater (Dalio), Hayman (Bass), Druckenmiller** — INCLUDED with low `coverage_pct` (5-30%). Their 13F slices are small but represent intentional positions worth surfacing, just at proportional weight.
+
+If a future maintainer wants to add or remove a filer, the test is:
+1. Are the 13F positions *thesis-driven* (human chose each)? If no → exclude under `algorithmic_basket`.
+2. What fraction of their book does 13F capture? → annotate `coverage_pct`.
+3. Recent track record? → use to inform `multiplier`, not as a gate.
 
 ### 6.1 13F-HR (45-day delay; surface this caveat in UI)
 - Diff each filer's current 13F vs prior. Emit `new_position`, `add`, `trim`, `exit`.
