@@ -48,7 +48,19 @@ TRACKED_FORM_TYPES = {
     "SC 13D", "SC 13D/A",
     "SC 13G", "SC 13G/A",
     "4", "4/A",
+    "8-K", "8-K/A",
 }
+
+# 8-Ks are filed for many reasons; most are noise (routine SOX governance,
+# auditor changes, etc.). We keep only those reporting *material* item numbers.
+# Item map (SEC's 8-K item structure):
+#   1.01 — Entry into a Material Definitive Agreement (M&A LOIs, partnerships)
+#   2.01 — Completion of Acquisition or Disposition of Assets
+#   5.02 — Departure / Election of Directors or Officers (CEO/CFO changes)
+#   8.01 — Other Material Events (catch-all for material disclosures, often
+#          investment announcements when no other item fits)
+# Add more if you want broader coverage; remove to tighten.
+MATERIAL_8K_ITEMS = {"1.01", "2.01", "5.02", "8.01"}
 
 # EDGAR allows 10 req/s. We target 8 to leave headroom.
 MIN_INTERVAL_S = 1.0 / 8
@@ -107,10 +119,17 @@ def extract_filing_rows(submissions: dict[str, Any]) -> list[dict[str, Any]]:
     n = len(recent["accessionNumber"])
 
     rows: list[dict[str, Any]] = []
+    items_col = recent.get("items", [""] * n)  # missing on some old filings
     for i in range(n):
         form = recent["form"][i]
         if form not in TRACKED_FORM_TYPES:
             continue
+        # 8-K item-number gate: drop noise like auditor changes, routine governance.
+        if form in ("8-K", "8-K/A"):
+            raw_items = (items_col[i] or "") if i < len(items_col) else ""
+            items_list = [x.strip() for x in raw_items.split(",") if x.strip()]
+            if not any(item in MATERIAL_8K_ITEMS for item in items_list):
+                continue
         acc = recent["accessionNumber"][i]
         primary_doc = recent["primaryDocument"][i]
         acc_nodash = acc.replace("-", "")

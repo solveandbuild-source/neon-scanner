@@ -1,11 +1,14 @@
-# Tracked filers — the 30 the user actually watches.
+# Tracked filers — 30 fund managers + 10 corporate strategic investors.
 #
 # Categories:
-#   value      - long-horizon value/generalist managers
-#   concentrated - high-conviction concentrated/contrarian books
-#   growth     - growth/tech books (mostly Tiger cubs + ARK)
-#   activist   - 13D-filers who actively push for change; weighted heaviest
-#   macro      - macro / event-driven
+#   value                - long-horizon value/generalist managers
+#   concentrated         - high-conviction concentrated/contrarian books
+#   growth               - growth/tech books (mostly Tiger cubs + ARK)
+#   activist             - 13D-filers who actively push for change; weighted heaviest
+#   macro                - macro / event-driven
+#   corporate_strategic  - public companies whose strategic investments are
+#                          signal-bearing (e.g. NVIDIA's $5B Intel stake).
+#                          They file 8-K, not 13F. See CLAUDE.md §6.0.
 #
 # multiplier applies to ALL signals from this filer in the confluence scorer.
 # Per the user's stated rationale, activists are weighted heaviest because
@@ -177,10 +180,67 @@ filers:
     category: macro
     multiplier: 1.0
 
+  # ─── corporate strategic investors (multiplier 1.5) ──────────────────────
+  # These are public companies. They don't file 13F. Their strategic equity
+  # investments and M&A show up in 8-K (Item 1.01 / 2.01 / 8.01) and
+  # occasionally 13D when they cross 5% of a target.
+  # Multiplier 1.5 — between value (1.0) and activist (2.0): a corporate
+  # strategic stake is a strong signal but a different kind than a fund pick.
+  - name: "NVIDIA Corporation"
+    cik: "0001045810"
+    category: corporate_strategic
+    multiplier: 1.5
+
+  - name: "Microsoft Corporation"
+    cik: "0000789019"
+    category: corporate_strategic
+    multiplier: 1.5
+
+  - name: "Alphabet Inc."
+    cik: "0001652044"
+    category: corporate_strategic
+    multiplier: 1.5
+
+  - name: "Amazon.com, Inc."
+    cik: "0001018724"
+    category: corporate_strategic
+    multiplier: 1.5
+
+  - name: "Meta Platforms, Inc."
+    cik: "0001326801"
+    category: corporate_strategic
+    multiplier: 1.5
+
+  - name: "Apple Inc."
+    cik: "0000320193"
+    category: corporate_strategic
+    multiplier: 1.5
+
+  - name: "Oracle Corporation"
+    cik: "0001341439"
+    category: corporate_strategic
+    multiplier: 1.5
+
+  - name: "Broadcom Inc."
+    cik: "0001730168"
+    category: corporate_strategic
+    multiplier: 1.5
+
+  - name: "Salesforce, Inc."
+    cik: "0001108524"
+    category: corporate_strategic
+    multiplier: 1.5
+
+  - name: "Adobe Inc."
+    cik: "0000796343"
+    category: corporate_strategic
+    multiplier: 1.5
+
 # ─────────────────────────────────────────────────────────────────────────
 # Deliberate exclusions — do NOT re-add without reading CLAUDE.md §6.0:
 #   - Bridgewater (Dalio)    — too diversified; 13F signal poor
 #   - Renaissance Technologies — mostly stat-arb noise
 #   - Soros Fund Management  — mostly bonds/macro; 13Fs unrepresentative
-# Count: 30 active filers. If editing, keep the count and the rationale aligned.
+# Count: 40 active filers = 30 fund managers + 10 corporate strategic.
+# If editing, keep the count and the rationale aligned.
 # ─────────────────────────────────────────────────────────────────────────

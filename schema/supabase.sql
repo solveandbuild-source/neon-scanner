@@ -14,7 +14,7 @@ create table if not exists tracked_filers (
     id              uuid primary key default gen_random_uuid(),
     cik             text unique,            -- nullable: filer may be pending lookup
     name            text not null,
-    category        text not null check (category in ('activist','value','quality','insider','credit')),
+    category        text not null check (category in ('value','concentrated','growth','activist','macro','corporate_strategic')),
     multiplier      numeric not null default 1.0,
     active          boolean not null default true,
     created_at      timestamptz not null default now()
