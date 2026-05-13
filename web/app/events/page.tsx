@@ -270,7 +270,7 @@ export default async function EventsPage() {
         {recent13D.length === 0 ? (
           <p className="text-sm text-neutral-500">No 13D/G events parsed yet.</p>
         ) : (
-          <div className="overflow-x-auto rounded-md border border-neutral-800">
+          <div className="rounded-md border border-neutral-800">
             <table className="w-full text-sm">
               <thead className="bg-neutral-900 text-left text-xs uppercase tracking-wider text-neutral-400">
                 <tr>
@@ -337,7 +337,7 @@ export default async function EventsPage() {
         {insiderBuys.length === 0 ? (
           <p className="text-sm text-neutral-500">No insider buys parsed yet.</p>
         ) : (
-          <div className="overflow-x-auto rounded-md border border-neutral-800">
+          <div className="rounded-md border border-neutral-800">
             <table className="w-full text-sm">
               <thead className="bg-neutral-900 text-left text-xs uppercase tracking-wider text-neutral-400">
                 <tr>
@@ -388,7 +388,7 @@ export default async function EventsPage() {
         {eightKs.length === 0 ? (
           <p className="text-sm text-neutral-500">No 8-K filings ingested yet.</p>
         ) : (
-          <div className="overflow-x-auto rounded-md border border-neutral-800">
+          <div className="rounded-md border border-neutral-800">
             <table className="w-full text-sm">
               <thead className="bg-neutral-900 text-left text-xs uppercase tracking-wider text-neutral-400">
                 <tr>

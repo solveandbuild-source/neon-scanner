@@ -88,7 +88,7 @@ export default async function FilingsPage() {
         <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-400 mb-3">
           Most recent activity
         </h2>
-        <div className="overflow-x-auto rounded-md border border-neutral-800">
+        <div className="rounded-md border border-neutral-800">
           <table className="w-full text-sm">
             <thead className="bg-neutral-900 text-left text-xs uppercase tracking-wider text-neutral-400">
               <tr>

@@ -31,15 +31,22 @@ export function FormTooltip({ term }: { term: string }) {
   const slug = slugForForm(term);
 
   return (
-    <span className="group relative inline-block">
+    <span
+      className="group relative inline-block focus-within:z-30"
+      tabIndex={0}
+    >
       <span className="underline decoration-dotted decoration-neutral-500 cursor-help">
         {term}
       </span>
       <span
         className={[
-          "invisible group-hover:visible",
-          "absolute left-0 top-full mt-1 z-20",
-          "w-56 rounded-md border border-neutral-700 bg-neutral-900 shadow-xl",
+          // hidden by default, visible on hover OR keyboard/click focus
+          "invisible opacity-0 group-hover:visible group-hover:opacity-100",
+          "group-focus:visible group-focus:opacity-100",
+          "transition-opacity duration-100",
+          // popover positioning
+          "absolute left-0 top-full mt-1 z-30",
+          "w-60 rounded-md border border-neutral-700 bg-neutral-900 shadow-xl",
           "p-2",
           "text-left",
         ].join(" ")}
