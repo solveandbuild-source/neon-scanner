@@ -28,11 +28,12 @@ function Section({
       <div className="space-y-3">
         {entries.map((e) => (
           <div key={e.term} className="rounded-md border border-neutral-800 p-3">
-            <div className="font-mono text-sm font-medium text-neutral-100">{e.term}</div>
-            <div className="mt-1 text-sm text-neutral-300">{e.long}</div>
+            <div className="text-sm font-semibold text-neutral-100">{e.term}</div>
+            <div className="mt-1 text-xs italic text-neutral-400">{e.short}</div>
+            <div className="mt-2 text-sm text-neutral-300 leading-relaxed">{e.meaning}</div>
             {e.example && (
-              <div className="mt-2 text-xs text-neutral-500">
-                <span className="text-neutral-400">Example: </span>{e.example}
+              <div className="mt-3 rounded bg-neutral-900/60 p-2 text-xs text-neutral-400 border-l-2 border-l-blue-500/40">
+                <span className="text-neutral-300 font-medium">Example. </span>{e.example}
               </div>
             )}
           </div>

@@ -129,6 +129,58 @@ type EventForm4 = {
   primary_doc_url: string | null;
 };
 
+type Event8K = {
+  accession_number: string;
+  cik: string;
+  filer_name: string | null;
+  filed_at: string;
+  items: string;  // comma-separated like "1.01,9.01"
+  primary_doc_url: string | null;
+};
+
+// 8-K item-number → plain-English label
+const ITEM_LABELS: Record<string, string> = {
+  "1.01": "Material agreement (M&A, partnership, etc.)",
+  "1.02": "Termination of material agreement",
+  "2.01": "Acquisition completed",
+  "2.02": "Earnings results",
+  "5.02": "Officer / director change (CEO, CFO, board)",
+  "5.07": "Shareholder vote results",
+  "7.01": "Reg FD disclosure",
+  "8.01": "Other material event",
+  "9.01": "Exhibits (supporting documents)",
+};
+const ITEM_PRIORITY = new Set(["1.01", "2.01", "5.02", "8.01"]);
+
+function describeItems(itemsStr: string): { labels: string[]; priority: boolean } {
+  const items = itemsStr.split(",").map((s) => s.trim()).filter(Boolean);
+  let priority = false;
+  const labels = items.map((i) => {
+    if (ITEM_PRIORITY.has(i)) priority = true;
+    return ITEM_LABELS[i] ? `${i} — ${ITEM_LABELS[i]}` : i;
+  });
+  return { labels, priority };
+}
+
+async function fetch8Ks(): Promise<Event8K[]> {
+  const sb = supabaseServer();
+  const { data, error } = await sb
+    .from("filings_raw")
+    .select("accession_number,cik,filer_name,filed_at,primary_doc_url,raw_payload")
+    .in("form_type", ["8-K", "8-K/A"])
+    .order("filed_at", { ascending: false })
+    .limit(60);
+  if (error) throw error;
+  return (data as Array<Event8K & { raw_payload: { items?: string } }>).map((r) => ({
+    accession_number: r.accession_number,
+    cik: r.cik,
+    filer_name: r.filer_name,
+    filed_at: r.filed_at,
+    items: r.raw_payload?.items ?? "",
+    primary_doc_url: r.primary_doc_url,
+  }));
+}
+
 async function fetchInsiderBuys(): Promise<EventForm4[]> {
   const sb = supabaseServer();
   const { data, error } = await sb
@@ -182,7 +234,11 @@ function tierBorderClass(t: 0 | 1 | 2): string {
 }
 
 export default async function EventsPage() {
-  const [allEvents, insiderBuys] = await Promise.all([fetchAllEvents13D(), fetchInsiderBuys()]);
+  const [allEvents, insiderBuys, eightKs] = await Promise.all([
+    fetchAllEvents13D(),
+    fetchInsiderBuys(),
+    fetch8Ks(),
+  ]);
   const recent13D = allEvents.slice(0, 60);
 
   return (
@@ -318,6 +374,72 @@ export default async function EventsPage() {
                     </td>
                   </tr>
                 ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <section>
+        <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-400 mb-3">
+          8-K material events ({eightKs.length})
+        </h2>
+        <p className="text-xs text-neutral-500 mb-3">
+          Companies must disclose any material event (M&amp;A, leadership changes, big contracts, strategic investments) within 4 business days via Form 8-K.
+          Filtered to items 1.01, 2.01, 5.02, 8.01 (the high-signal item numbers).
+          Rows where the filer is a corporate strategic investor (NVIDIA, Microsoft, etc.) get the sky-blue bar — those are most worth watching.
+        </p>
+        {eightKs.length === 0 ? (
+          <p className="text-sm text-neutral-500">No 8-K filings ingested yet.</p>
+        ) : (
+          <div className="overflow-x-auto rounded-md border border-neutral-800">
+            <table className="w-full text-sm">
+              <thead className="bg-neutral-900 text-left text-xs uppercase tracking-wider text-neutral-400">
+                <tr>
+                  <th className="px-3 py-2 font-medium">Filed</th>
+                  <th className="px-3 py-2 font-medium">Filer</th>
+                  <th className="px-3 py-2 font-medium">What happened (items)</th>
+                  <th className="px-3 py-2 font-medium">Link</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-neutral-800">
+                {eightKs.map((e) => {
+                  const info = filerInfo(e.cik);
+                  const t = tier(e.cik);
+                  const desc = describeItems(e.items);
+                  return (
+                    <tr key={e.accession_number} className={`hover:bg-neutral-900/50 ${tierBorderClass(t)}`}>
+                      <td className="px-3 py-2 text-neutral-300 whitespace-nowrap">
+                        <span title={e.filed_at.slice(0, 10)}>{daysAgo(e.filed_at)}</span>
+                      </td>
+                      <td className="px-3 py-2">
+                        <div className="text-neutral-200">{info?.entity ?? e.filer_name ?? e.cik}</div>
+                        {info?.manager && (
+                          <div className="text-xs text-neutral-500">{info.manager} · {info.category}</div>
+                        )}
+                        {!info?.manager && info?.category && (
+                          <div className="text-xs text-neutral-500">{info.category}</div>
+                        )}
+                      </td>
+                      <td className="px-3 py-2">
+                        <ul className="space-y-0.5">
+                          {desc.labels.map((label, i) => (
+                            <li key={i} className="text-xs text-neutral-300">
+                              <span className={ITEM_PRIORITY.has(label.split(" ")[0]) ? "text-emerald-300" : "text-neutral-400"}>
+                                {label}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      </td>
+                      <td className="px-3 py-2">
+                        {e.primary_doc_url ? (
+                          <a href={e.primary_doc_url} target="_blank" rel="noreferrer" className="text-blue-400 hover:underline">sec.gov ↗</a>
+                        ) : <span className="text-neutral-600">—</span>}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
