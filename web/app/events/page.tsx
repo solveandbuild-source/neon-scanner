@@ -246,21 +246,37 @@ export default async function EventsPage() {
     <div className="max-w-7xl mx-auto space-y-10">
       <header>
         <h1 className="text-2xl font-semibold tracking-tight">Events</h1>
-        <p className="mt-1 text-sm text-neutral-400">
-          Activist stake disclosures (13D/G) and tracked-filer insider purchases (Form 4 code &quot;P&quot;).
-          New here? Read the <Link href="/learn" className="text-blue-400 hover:underline">glossary</Link>.
-        </p>
-        <div className="mt-3 flex flex-col gap-1 text-xs text-neutral-500">
-          <div>
-            <span className="text-neutral-400 font-medium">Colored bar on left edge of row:</span>
-            <span className="inline-block w-2 h-3 align-middle mx-2 bg-amber-500"></span>activist
-            <span className="inline-block w-2 h-3 align-middle mx-2 bg-sky-500"></span>corporate strategic
-            <span className="inline-block w-2 h-3 align-middle mx-2 bg-neutral-700"></span>value / growth / concentrated (baseline)
+        <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+          <div className="rounded-md border border-neutral-800 p-3">
+            <div className="text-neutral-400 font-medium uppercase tracking-wide mb-2">On this page</div>
+            <ul className="space-y-1 text-neutral-300">
+              <li><span className="font-mono text-neutral-100">13D/G</span> — activist or passive 5%+ stakes</li>
+              <li><span className="font-mono text-neutral-100">Form 4 P</span> — insider purchases</li>
+              <li><span className="font-mono text-neutral-100">8-K</span> — corporate material events</li>
+            </ul>
           </div>
-          <div>
-            <span className="text-neutral-400 font-medium">Direction column:</span> compares each filing&apos;s % ownership against the same filer&apos;s previous filing on the same company. NEW = no prior filing; AMEND = % unchanged.
+          <div className="rounded-md border border-neutral-800 p-3">
+            <div className="text-neutral-400 font-medium uppercase tracking-wide mb-2">Row color</div>
+            <ul className="space-y-1 text-neutral-300">
+              <li><span className="inline-block w-2 h-3 align-middle mr-2 bg-amber-500"></span>activist (top priority)</li>
+              <li><span className="inline-block w-2 h-3 align-middle mr-2 bg-sky-500"></span>corporate strategic</li>
+              <li><span className="inline-block w-2 h-3 align-middle mr-2 bg-neutral-700"></span>value / growth / concentrated</li>
+            </ul>
+          </div>
+          <div className="rounded-md border border-neutral-800 p-3">
+            <div className="text-neutral-400 font-medium uppercase tracking-wide mb-2">Direction</div>
+            <ul className="space-y-1 text-neutral-300">
+              <li><span className="font-mono text-emerald-300">NEW</span> — first filing seen</li>
+              <li><span className="font-mono text-emerald-300">INCREASE</span> — bigger stake</li>
+              <li><span className="font-mono text-red-300">DECREASE</span> — smaller stake</li>
+              <li><span className="font-mono text-neutral-400">AMEND</span> — % unchanged</li>
+            </ul>
           </div>
         </div>
+        <p className="mt-3 text-xs text-neutral-500">
+          Hover any form code (e.g. <span className="underline decoration-dotted">13D/A</span>) for a definition.{" "}
+          <Link href="/learn" className="text-blue-400 hover:underline">Full glossary →</Link>
+        </p>
       </header>
 
       <section>
