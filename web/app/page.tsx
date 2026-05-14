@@ -92,18 +92,19 @@ export default async function FilingsPage() {
           <table className="w-full text-sm">
             <thead className="bg-neutral-900 text-left text-xs uppercase tracking-wider text-neutral-400">
               <tr>
-                <th className="px-3 py-2 font-medium">Filed</th>
+                <th className="px-3 py-2 font-medium" title="Date the filing was submitted to SEC">Filed</th>
                 <th className="px-3 py-2 font-medium">Filer</th>
                 <th className="px-3 py-2 font-medium">Form</th>
-                <th className="px-3 py-2 font-medium">Period</th>
+                <th className="px-3 py-2 font-medium" title="Reporting period covered by the filing (e.g. transaction date for Form 4, quarter-end for 13F). NOT the filing date.">Period covered</th>
                 <th className="px-3 py-2 font-medium">Link</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-neutral-800">
               {recent.map((f) => (
                 <tr key={f.accession_number} className="hover:bg-neutral-900/50">
-                  <td className="px-3 py-2 whitespace-nowrap text-neutral-300">
-                    <span title={shortDate(f.filed_at)}>{daysAgo(f.filed_at)}</span>
+                  <td className="px-3 py-2 whitespace-nowrap text-neutral-300" title={`Filed on ${shortDate(f.filed_at)}`}>
+                    <span className="text-neutral-100">{shortDate(f.filed_at)}</span>
+                    <span className="text-neutral-500 text-xs ml-2">({daysAgo(f.filed_at)})</span>
                   </td>
                   <td className="px-3 py-2 text-neutral-200">{f.filer_name ?? f.cik}</td>
                   <td className="px-3 py-2 text-neutral-300">
