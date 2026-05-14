@@ -367,6 +367,61 @@ filers:
     category: activist
     multiplier: 2.0
 
+  # ─── small-cap specialists (multiplier 1.0) ─────────────────────────────
+  # Added May 2026 to catch the PLAB-style gap — small-cap names that the
+  # mid/large-cap funds above don't touch. These are sub-$5B AUM shops with
+  # deep small-cap research. Surfaced via SEC 13F full-text search on
+  # Photronics (PLAB) — these were the actual holders we'd previously missed.
+  - name: "Needham Investment Management"
+    cik: "0001167212"
+    category: growth
+    multiplier: 1.0
+
+  - name: "Mill Road Capital Management"
+    cik: "0001512275"
+    category: activist
+    multiplier: 2.0
+
+  - name: "Perritt Capital Management"
+    cik: "0001279342"
+    category: value
+    multiplier: 1.0
+
+  - name: "Pacific Ridge Capital Partners"
+    cik: "0001591546"
+    category: value
+    multiplier: 1.0
+
+  - name: "Nierenberg Investment Management"
+    cik: "0001282683"
+    category: concentrated
+    multiplier: 1.0
+
+  - name: "Bridge City Capital"
+    cik: "0001713521"
+    category: growth
+    multiplier: 1.0
+
+  - name: "Skylands Capital"
+    cik: "0001299910"
+    category: value
+    multiplier: 1.0
+
+  - name: "Symmetry Peak Management"
+    cik: "0001389234"
+    category: concentrated
+    multiplier: 1.0
+
+  - name: "Kestrel Investment Management"
+    cik: "0000917579"
+    category: value
+    multiplier: 1.0
+
+  - name: "Meros Investment Management"
+    cik: "0001911372"
+    category: concentrated
+    multiplier: 1.0
+
   # ─── macro (multiplier 1.0, low coverage_pct annotation in web/lib/filers.ts) ─
   # Bass's book is mostly sovereign macro / credit — 13F shows ~10% of it.
   # Re-added under the softened rule: don't exclude on coverage, annotate

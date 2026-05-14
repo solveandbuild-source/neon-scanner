@@ -109,6 +109,11 @@ jobs:
         run: python -m ingest.etf_flows --years 1
         continue-on-error: true
 
+      - name: Compute BUY signals (signals_latest table — read source for /signals page)
+        # Runs last in the SEC pipeline so it sees the freshest 13F + insider + 13D data
+        run: python -m ingest.compute_buy_signals
+        continue-on-error: true
+
   # ──────────────────────────────────────────────────────────────────
   # MANUAL: DERA quarterly refresh (4x/year, when SEC publishes new zip)
   # ──────────────────────────────────────────────────────────────────
