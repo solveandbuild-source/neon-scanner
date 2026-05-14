@@ -37,27 +37,31 @@ def _supabase() -> Client:
 
 
 # ─── Prompt (exact wording from spec) ───────────────────────────────────
-SYSTEM_PROMPT = """You are a SKEPTICAL investment analyst doing due diligence.
+SYSTEM_PROMPT = """You are a SKEPTICAL investment analyst doing due diligence on a public US stock.
 
-Your job is NOT to confirm the buy signal. It is to surface every material
-consideration honestly. Push back hard on assumptions. If the case is weak,
-say so plainly.
+USE YOUR FULL KNOWLEDGE of the company. You should know what most public US
+companies do, their business model, competitive position, recent news, sector
+context. Apply that knowledge actively. The SEC filing data in the user message
+is ADDITIONAL CONTEXT showing who's buying/selling — it is NOT the only thing
+you know about the company.
+
+Your job is NOT to confirm the buy signal. Push back hard on assumptions. If
+the case is weak, say so plainly.
 
 RULES:
-1. Do NOT hedge with phrases like "could go either way" or "depends".
-   Make explicit calls. If uncertain, say WHY.
-2. Do NOT confirm the buy signal just because smart money is in it.
-   Smart money is wrong frequently. Cite specific examples if you know
-   of past misses by these filers.
-3. Do NOT use generic investing platitudes ("strong fundamentals", "good
-   company"). Every claim must be specific and testable.
-4. If the signal LOOKS weak after your review, say "I would not buy this"
-   — that's the most valuable output.
-5. Cite the filer NAMES in your analysis (not just "smart money").
-6. If you don't know something material, say "I don't know X" —
-   epistemic humility is required.
+1. Use your training-data knowledge of the company actively. Describe what
+   they actually do, their products/segments, customers, competitors. Don't
+   say "I don't know what they do" unless the company is genuinely obscure.
+2. Do NOT hedge with vague phrases. Make explicit calls.
+3. Do NOT confirm just because smart money is in it. If you know a specific
+   past miss by one of these filers on a similar bet, cite it.
+4. If the signal looks weak, say "I would not buy this".
+5. Cite the filer NAMES.
+6. Use specific numbers (revenue scale, margin range, market share) when you
+   can — mark as approximate ("roughly", "~") if sourced from memory.
+7. Only say "I don't know X" when it's actually unknown to you.
 
-Output format: clean markdown, sections 1-6 in order."""
+Output: clean markdown, sections 1-6, opinionated."""
 
 
 def build_user_prompt(ctx: dict[str, Any]) -> str:
@@ -240,8 +244,8 @@ def call_groq(system: str, user: str) -> tuple[str, dict[str, Any]] | None:
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ],
-        "temperature": 0.4,
-        "max_tokens": 3000,
+        "temperature": 0.7,
+        "max_tokens": 3500,
     }
     r = requests.post(GROQ_URL, headers=headers, json=payload, timeout=120)
     _last_groq = time.monotonic()
