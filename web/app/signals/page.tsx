@@ -51,16 +51,21 @@ function fmtAum(v: number | null) {
   return `$${v.toFixed(0)}`;
 }
 
-async function fetchSignals(): Promise<Signal[]> {
+type SortKey = "score" | "latest_signal" | "first_detected";
+
+async function fetchSignals(sort: SortKey): Promise<Signal[]> {
   const sb = supabaseServer();
-  // Paginate up to 1000 — postgrest default limit
+  const col = sort === "latest_signal" ? "latest_signal_at"
+            : sort === "first_detected" ? "first_detected_at"
+            : "score";
   const out: Signal[] = [];
   let from = 0;
   while (true) {
     const { data, error } = await sb
       .from("signals_latest")
       .select("*")
-      .order("score", { ascending: false })
+      .order(col, { ascending: false, nullsFirst: false })
+      .order("score", { ascending: false })  // tiebreaker
       .range(from, from + 999);
     if (error) throw error;
     if (!data || data.length === 0) break;
@@ -74,11 +79,14 @@ async function fetchSignals(): Promise<Signal[]> {
 export default async function SignalsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ min_score?: string }>;
+  searchParams: Promise<{ min_score?: string; sort?: string }>;
 }) {
   const sp = await searchParams;
   const minScore = sp.min_score ? parseFloat(sp.min_score) : 7;
-  const allSignals = await fetchSignals();
+  const sortKey: SortKey = sp.sort === "latest_signal" ? "latest_signal"
+                        : sp.sort === "first_detected" ? "first_detected"
+                        : "score";
+  const allSignals = await fetchSignals(sortKey);
   const signals = allSignals.filter((s) => s.score >= minScore);
   const totalCount = allSignals.length;
   const lastComputed = allSignals[0]?.computed_at ?? null;
@@ -98,8 +106,8 @@ export default async function SignalsPage({
         </p>
       </header>
 
-      {/* Score filter */}
-      <form method="get" className="flex items-center gap-3 text-sm">
+      {/* Score filter + sort */}
+      <form method="get" className="flex items-center gap-3 text-sm flex-wrap">
         <label htmlFor="min_score" className="text-neutral-400">Min score:</label>
         <input
           type="number"
@@ -110,14 +118,25 @@ export default async function SignalsPage({
           min="0"
           className="w-24 bg-neutral-900 border border-neutral-700 rounded px-2 py-1 text-neutral-100 focus:outline-none focus:border-emerald-600"
         />
+        <label htmlFor="sort" className="text-neutral-400 ml-3">Sort by:</label>
+        <select
+          id="sort"
+          name="sort"
+          defaultValue={sortKey}
+          className="bg-neutral-900 border border-neutral-700 rounded px-2 py-1 text-neutral-100 focus:outline-none focus:border-emerald-600"
+        >
+          <option value="score">Score (desc)</option>
+          <option value="latest_signal">Latest signal date (desc)</option>
+          <option value="first_detected">First detected date (desc)</option>
+        </select>
         <button
           type="submit"
           className="px-3 py-1 rounded bg-emerald-900/40 border border-emerald-700/60 text-emerald-200 hover:bg-emerald-900/60"
         >
-          Filter
+          Apply
         </button>
         <span className="text-xs text-neutral-500">
-          (try 7 for clean signal, 15 for high-confluence only, 20 for top tier)
+          (try 7 for clean signal, 15 for high-confluence, 20 for top tier)
         </span>
       </form>
 
