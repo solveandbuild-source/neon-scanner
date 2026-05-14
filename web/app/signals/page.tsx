@@ -53,11 +53,12 @@ function fmtAum(v: number | null) {
 
 type SortKey = "score" | "latest_signal" | "first_detected";
 
-async function fetchSignals(sort: SortKey): Promise<Signal[]> {
+async function fetchSignals(sort: SortKey): Promise<(Signal & { company_name: string | null })[]> {
   const sb = supabaseServer();
   const col = sort === "latest_signal" ? "latest_signal_at"
             : sort === "first_detected" ? "first_detected_at"
             : "score";
+  // Fetch signals + tickers.name in one trip
   const out: Signal[] = [];
   let from = 0;
   while (true) {
@@ -65,7 +66,7 @@ async function fetchSignals(sort: SortKey): Promise<Signal[]> {
       .from("signals_latest")
       .select("*")
       .order(col, { ascending: false, nullsFirst: false })
-      .order("score", { ascending: false })  // tiebreaker
+      .order("score", { ascending: false })
       .range(from, from + 999);
     if (error) throw error;
     if (!data || data.length === 0) break;
@@ -73,7 +74,20 @@ async function fetchSignals(sort: SortKey): Promise<Signal[]> {
     if (data.length < 1000) break;
     from += 1000;
   }
-  return out;
+  // Fetch ticker→name map (companies in our universe)
+  const tickerSet = Array.from(new Set(out.map((s) => s.ticker)));
+  const nameMap = new Map<string, string>();
+  for (let i = 0; i < tickerSet.length; i += 500) {
+    const batch = tickerSet.slice(i, i + 500);
+    const { data } = await sb
+      .from("tickers")
+      .select("ticker,name")
+      .in("ticker", batch);
+    for (const row of data || []) {
+      if (row.ticker && row.name) nameMap.set(row.ticker, row.name);
+    }
+  }
+  return out.map((s) => ({ ...s, company_name: nameMap.get(s.ticker) ?? null }));
 }
 
 export default async function SignalsPage({
@@ -151,15 +165,17 @@ export default async function SignalsPage({
             <thead className="bg-neutral-900 text-left text-xs uppercase tracking-wider text-neutral-400">
               <tr>
                 <th className="px-3 py-2 font-medium">Ticker</th>
+                <th className="px-3 py-2 font-medium">Company</th>
                 <th className="px-3 py-2 font-medium text-right" title="Sum of all 7 signal-type contributions">Score</th>
                 <th className="px-3 py-2 font-medium text-right" title="How many of the 7 signal types are firing">Sources</th>
                 <th className="px-3 py-2 font-medium text-xs" title="Signal breakdown: ins=insider cluster, new=13F new positions, add=13F adds, 13d=activist 13D, vel=share-count velocity, xq=cross-quarter confluence">Breakdown</th>
+                <th className="px-3 py-2 font-medium" title="Notable filers firing this signal (hover for full list)">Top filers</th>
                 <th className="px-3 py-2 font-medium" title="Earliest filing date among contributing signals">First detected</th>
                 <th className="px-3 py-2 font-medium" title="Latest filing date among contributing signals">Latest signal</th>
                 <th className="px-3 py-2 font-medium text-right">Market Cap</th>
-                <th className="px-3 py-2 font-medium text-right">1M return</th>
-                <th className="px-3 py-2 font-medium text-right">6M return</th>
-                <th className="px-3 py-2 font-medium text-right">YTD return</th>
+                <th className="px-3 py-2 font-medium text-right">1M</th>
+                <th className="px-3 py-2 font-medium text-right">6M</th>
+                <th className="px-3 py-2 font-medium text-right">YTD</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-neutral-900">
@@ -182,15 +198,31 @@ export default async function SignalsPage({
                   c.share_velocity?.n ? `Share-count velocity (2x+): ${c.share_velocity.n}` : null,
                   c.cross_q_confluence?.n ? `Cross-Q confluence filers: ${c.cross_q_confluence.n}` : null,
                 ].filter(Boolean).join("\n");
+                // Build top filer list across signal types
+                const allFilers: string[] = [];
+                const cf = s.contributing_filers || {};
+                for (const f of cf.activist ?? []) allFilers.push(f);
+                for (const [f] of cf.velocity ?? []) allFilers.push(f);
+                for (const f of cf.new ?? []) allFilers.push(f);
+                for (const f of cf.add ?? []) allFilers.push(f);
+                for (const f of cf.insider_buyers ?? []) allFilers.push(f);
+                const seenFiler = new Set<string>();
+                const dedupFilers = allFilers.filter((f) => { if (seenFiler.has(f)) return false; seenFiler.add(f); return true; });
+                const topFilersDisplay = dedupFilers.slice(0, 2);
+                const allFilersTooltip = dedupFilers.join("\n");
                 return (
                   <tr key={s.ticker} className="hover:bg-neutral-900/40">
                     <td className="px-3 py-2 font-mono text-neutral-100">{s.ticker}</td>
+                    <td className="px-3 py-2 text-neutral-300 max-w-xs truncate" title={s.company_name ?? ""}>{s.company_name ?? "—"}</td>
                     <td className="px-3 py-2 text-right tabular-nums">
                       {star && <span className="text-amber-300 mr-1" title="Multi-source bonus (3+ signal types)">★</span>}
                       <span className="text-neutral-100 font-medium">{s.score.toFixed(1)}</span>
                     </td>
                     <td className="px-3 py-2 text-right text-neutral-300 tabular-nums">{s.num_sources}</td>
                     <td className="px-3 py-2 text-xs text-neutral-400 font-mono whitespace-nowrap" title={tooltipLines}>{breakdown}</td>
+                    <td className="px-3 py-2 text-xs text-neutral-400 max-w-xs truncate" title={allFilersTooltip}>
+                      {topFilersDisplay.join(", ")}{dedupFilers.length > 2 ? ` +${dedupFilers.length - 2}` : ""}
+                    </td>
                     <td className="px-3 py-2 text-xs text-neutral-400 tabular-nums">{s.first_detected_at ?? "—"}</td>
                     <td className="px-3 py-2 text-xs text-neutral-400 tabular-nums">{s.latest_signal_at ?? "—"}</td>
                     <td className="px-3 py-2 text-right text-neutral-300 tabular-nums">{fmtAum(s.aum_usd)}</td>
