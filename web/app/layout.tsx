@@ -7,7 +7,7 @@ const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "portfolio-scanner",
+  title: "Neon Scanner",
   description:
     "Signal extraction from SEC filings by 30 tracked investors. No FOMO, no narrative.",
 };
@@ -18,7 +18,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className="min-h-full flex flex-col bg-neutral-950 text-neutral-200">
         <header className="border-b border-neutral-800 px-6 py-3 flex items-center gap-6">
           <Link href="/" className="font-semibold tracking-tight">
-            portfolio-scanner
+            Neon Scanner
           </Link>
           <nav className="flex gap-4 text-sm text-neutral-400 flex-1">
             <Link href="/" className="hover:text-neutral-100">Filings</Link>

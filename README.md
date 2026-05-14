@@ -1,4 +1,6 @@
-# portfolio-scanner
+# Neon Scanner
+
+> _(repo and local directory retain the old name `portfolio-scanner` to avoid breaking the Python venv — the product is **Neon Scanner**.)_
 
 Personal signal-extraction system that watches a curated universe of SEC filers (activists, value managers, notable insiders) and surfaces entry signals when filings cluster on a ticker — while filtering out anything that has already run too far to enter without FOMO.
 

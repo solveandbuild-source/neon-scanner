@@ -1,4 +1,6 @@
-# CLAUDE.md — portfolio-scanner
+# CLAUDE.md — Neon Scanner
+
+> _(repo dir is still `portfolio-scanner` to avoid breaking the venv. Product name: **Neon Scanner**.)_
 
 > Read this in full before writing any code. The philosophy here is load-bearing. The wrong instinct (build-more, add-LLM-layer, surface-trending-tickers) will silently corrupt the system. When in doubt, do less.
 
