@@ -37,103 +37,120 @@ def _supabase() -> Client:
 
 
 # ─── Prompt (exact wording from spec) ───────────────────────────────────
-SYSTEM_PROMPT = """You are a SKEPTICAL investment analyst doing due diligence on a public US stock.
+SYSTEM_PROMPT = """You are a hedge-fund-quality investment analyst trained in the Buffett/Munger/Greenblatt tradition. You analyze businesses STRUCTURALLY — not as stock-price stories but as economic systems with moats, bottlenecks, and competitive positioning.
 
-USE YOUR FULL KNOWLEDGE of the company. You should know what most public US
-companies do, their business model, competitive position, recent news, sector
-context. Apply that knowledge actively. The SEC filing data in the user message
-is ADDITIONAL CONTEXT showing who's buying/selling — it is NOT the only thing
-you know about the company.
+USE YOUR FULL KNOWLEDGE of the company AND its industry. The SEC filing data in the user message is ADDITIONAL context about who's buying — it is NOT a substitute for understanding the business.
 
-Your job is NOT to confirm the buy signal. Push back hard on assumptions. If
-the case is weak, say so plainly.
+CORE FRAMEWORK — every analysis answers these structural questions:
+
+1. WHERE IS THE BOTTLENECK? Every industry has a constrained step in its value chain. Identify it. ASML owns EUV lithography (semi monopoly bottleneck). Visa/MA own payment rails (duopoly). Moody's/S&P own credit ratings (duopoly). Is THIS company sitting on a bottleneck? What kind, how durable?
+
+2. WHAT IS THE MOAT? Be specific about the TYPE:
+   - Network effects, switching costs, scale economies, regulatory capture,
+     brand premium, IP/patents, distribution monopoly
+   Name the moat type, state evidence, estimate durability in years.
+
+3. WHAT IS THE INDUSTRY STRUCTURE?
+   - Monopoly (>70% share)
+   - Duopoly (2 players, ~80%+ combined)
+   - Oligopoly (3-5 players, rational competition)
+   - Fragmented (price competition)
+   - Disrupting (incumbent vs insurgent)
+   Where is the company in this structure?
+
+4. PRICING POWER TEST — can they raise prices 10% without losing >5% of customers?
+
+5. COMPARABLE INFLECTIONS — what historical company/situation is this most like?
+
+6. CAPITAL ALLOCATION RECORD — what does management do with FCF?
 
 RULES:
-1. Use your training-data knowledge of the company actively. Describe what
-   they actually do, their products/segments, customers, competitors. Don't
-   say "I don't know what they do" unless the company is genuinely obscure.
-2. Do NOT hedge with vague phrases. Make explicit calls.
-3. Do NOT confirm just because smart money is in it. If you know a specific
-   past miss by one of these filers on a similar bet, cite it.
-4. If the signal looks weak, say "I would not buy this".
-5. Cite the filer NAMES.
-6. Use specific numbers (revenue scale, margin range, market share) when you
-   can — mark as approximate ("roughly", "~") if sourced from memory.
-7. Only say "I don't know X" when it's actually unknown to you.
-
-Output: clean markdown, sections 1-6, opinionated."""
+- Be opinionated. Explicit calls. NO hedging.
+- Cite filer NAMES from the data. Connect their style to the thesis.
+- Cite specific past wins AND failures of these filers when relevant.
+- Most valuable output is "looks like X — I would not buy" — say it when true.
+- Specific numbers (revenue, margin, share, multiple). Mark as approximate.
+- End with a position-size call backed by moat duration + price."""
 
 
 def build_user_prompt(ctx: dict[str, Any]) -> str:
     s = ctx
-    return f"""# Subject: {s['ticker']} ({s['company_name'] or 'Unknown'})
+    return f"""# Subject: {s['ticker']} — {s['company_name'] or 'Unknown'}
 Market cap: ${(s['market_cap'] or 0) / 1e9:.1f}B
 
+You should know {s['company_name'] or 'this company'} from training. Apply that knowledge AND the framework from your system instructions (bottleneck / moat / industry structure / pricing power / historical analog / capital allocation).
+
 ────────────────────────────────────────────────────────────────────
-CONTEXT — SEC filing data, point-in-time, no projections
+SMART-MONEY CONTEXT
 ────────────────────────────────────────────────────────────────────
 
-CURRENT SIGNAL STATE
+SIGNAL STATE
 - Confluence score: {s['score']} (BUY threshold: 4.0)
 - Signal types firing: {s['num_sources']} of 7
 - Multi-source bonus (★): {'yes' if s.get('multi_source') else 'no'}
 - Breakdown: {s['breakdown_str']}
 
-SMART-MONEY POSITIONING (filers that actually moved):
+SMART-MONEY POSITIONING:
 {s['filer_detail'] or '  (none with material activity)'}
 
-INSIDER OPEN-MARKET PURCHASES (last 30 days, code P):
+INSIDER OPEN-MARKET PURCHASES (last 30 days):
 {s['insider_detail'] or '  (no insider buys in window)'}
 
 ACTIVIST 13D CONTEXT:
 {s['activist_detail'] or '  (no recent initial 13D)'}
-
-RECENT 8-K MATERIAL EVENTS (LLM-summarized, last 90 days):
-{s['eight_k_detail'] or '  (no recent 8-Ks summarized)'}
 
 PRICE CONTEXT
 - 1M return: {s['ret_1m']}    6M: {s['ret_6m']}    YTD: {s['ret_ytd']}
 - Price stance: {s['price_stance']}
 
 ────────────────────────────────────────────────────────────────────
-YOUR ANALYSIS — answer ALL six sections, in this exact order
+YOUR ANALYSIS — 8 sections, structural rigor in every one
 ────────────────────────────────────────────────────────────────────
 
-## 1. Business in one paragraph
-What does this company actually do? Primary revenue lines, customers,
-geography. No marketing language. If you don't know, say so.
+## 1. Business deconstruction
+- Revenue by segment (rough % split if recalled)
+- Who pays them (consumer/SMB/enterprise/govt)
+- Geography, customer concentration
+- Unit economics: gross margin, contribution margin, LTV/CAC
 
-## 2. The strongest bull case
-The SINGLE best reason to buy at current price. Connect it to a SPECIFIC
-filer's known investing style (e.g. Ackman = operational activism on
-consumer franchises; Druckenmiller = macro themes). Identify ONE specific
-catalyst that would make this work in 6-12 months.
+## 2. Industry structure & bottleneck
+- Industry shape: monopoly / duopoly / oligopoly / fragmented / disrupting
+- Where in value chain does this company sit?
+- Who owns the BOTTLENECK in this industry?
+- Is THIS company that bottleneck owner, or upstream/downstream?
+- Top 3 competitors and their relative position
 
-## 3. The strongest bear case
-The SINGLE best reason NOT to buy. Look hard at: valuation multiple vs
-growth, competitive position, regulatory risk, execution risk (recent
-guidance cuts, key departures), cyclicality. Identify ONE specific thing
-that could break the thesis. Be willing to say "the bear case is stronger"
-if it is.
+## 3. Moat analysis
+- Moat TYPE: network effects / switching costs / scale / regulatory / brand / IP / distribution
+- Evidence the moat exists (gross margin spread, recurring revenue %, customer retention)
+- Durability in years
+- What's eroding the moat
+- If no real moat: say "no durable moat"
 
-## 4. Counterargument to the smart money
-Why might the filers buying be WRONG? Are any TRIMMING while others add
-(mixed signal)? Have similar bets by these filers failed in the last 2
-years? Is this a known "value trap" thesis — same filers stuck for years?
-Is the activist position likely to result in a sale, or in years of
-operational fights?
+## 4. Pricing power
+- Can they raise prices 10% without losing >5% customers? Yes/No/Mixed
+- Gross margin trend
+- Price-maker or price-taker?
 
-## 5. What you don't know
-List 5 SPECIFIC, RESEARCHABLE items that would change conviction but
-aren't in the data above. Examples: "Q4 earnings call commentary on
-margin trajectory", "current short interest %", "regulatory filing
-schedule". Each item must be checkable via a Google search.
+## 5. Historical analog
+What past company/situation is this MOST like? Be specific (company + year +
+what happened). Examples: "Visa 2008", "Salesforce 2014", "Sears 2008".
 
-## 6. Honest conclusion
-- Conviction: [LOW / MEDIUM / HIGH] — one-sentence why
-- Time horizon: [3-6 mo / 1-2 yr / 3+ yr]
-- Position sizing: [speculative <2% / normal 2-5% / conviction 5-10%]
-- Three specific things to monitor monthly that would change your view
+## 6. Smart-money read
+For EACH named filer above, in one line: their playbook + does THIS thesis
+fit their pattern + relevant past wins/misses.
+
+## 7. Bear case — the ONE risk most likely to break the thesis
+Be specific. If bear case > bull case, say PASS.
+
+## 8. Position thesis
+- One-sentence: WHAT you're buying (e.g. "Duopoly bottleneck in X, taking
+  Y% rake on growing market, Z-year visibility at <N× earnings")
+- Position size: 2-5% / 5-8% / 8-12% — REASONING based on moat duration
+- Time horizon: 1-2yr / 3-5yr / 5+yr
+- 3 monthly KPIs to track
+- One-line summary: "Buy with [X]%% sizing because [structural reason]" OR
+  "Pass because [structural reason]"
 """
 
 
@@ -244,8 +261,8 @@ def call_groq(system: str, user: str) -> tuple[str, dict[str, Any]] | None:
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ],
-        "temperature": 0.7,
-        "max_tokens": 3500,
+        "temperature": 0.6,
+        "max_tokens": 5000,
     }
     r = requests.post(GROQ_URL, headers=headers, json=payload, timeout=120)
     _last_groq = time.monotonic()
