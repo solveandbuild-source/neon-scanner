@@ -2,73 +2,111 @@ name: Daily ETF flow ingest
 
 # Runs in GitHub-hosted runners (cloud) so it works regardless of whether
 # the user's laptop is on. Free tier limits (2000 min/month for private repos)
-# easily cover the ~3-min daily run = ~66 min/month.
+# easily cover the daily runs.
 
 on:
   schedule:
     # 22:00 UTC weekdays = 6 PM ET (winter) / 5 PM ET (summer).
     # After US market close in all DST scenarios.
     - cron: '0 22 * * 1-5'
-  workflow_dispatch:    # allows manual trigger from the Actions tab
+  workflow_dispatch:    # allow manual trigger from the Actions tab
 
-# Prevent overlapping runs (e.g. if a previous run is still going)
+# Prevent overlapping runs
 concurrency:
   group: daily-ingest
   cancel-in-progress: false
 
+env:
+  SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+  SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+  EDGAR_USER_AGENT: ${{ secrets.EDGAR_USER_AGENT }}
+  GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+
 jobs:
-  ingest:
+  # ──────────────────────────────────────────────────────────────────
+  # FLOWS PIPELINE — powers /flows dashboard (ETF rotation)
+  # ──────────────────────────────────────────────────────────────────
+  etf-flows:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
           cache: 'pip'
           cache-dependency-path: requirements.txt
+      - run: pip install -r requirements.txt
 
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-
-      - name: Capture Yahoo daily AUM
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
-          EDGAR_USER_AGENT: ${{ secrets.EDGAR_USER_AGENT }}
+      - name: Capture Yahoo daily AUM (all 34 ETFs)
         run: python -m ingest.etf_aum_yahoo
 
-      - name: Refresh iShares daily
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
-          EDGAR_USER_AGENT: ${{ secrets.EDGAR_USER_AGENT }}
-        # Keep window tight on daily runs — only need last few days
+      - name: Refresh iShares daily (10 ETFs)
         run: python -m ingest.etf_shares_ishares --days 7
 
       - name: Refresh public N-PORT XML (Mondays only)
         if: ${{ github.event.schedule == '0 22 * * 1' || github.event_name == 'workflow_dispatch' }}
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
-          EDGAR_USER_AGENT: ${{ secrets.EDGAR_USER_AGENT }}
-        # Weekly refresh — catches new filings as they hit EDGAR
         run: python -m ingest.etf_flows --years 1
-        continue-on-error: true  # don't fail the whole workflow if SEC is slow
+        continue-on-error: true
 
       - name: Rebuild etf_metrics
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
-          EDGAR_USER_AGENT: ${{ secrets.EDGAR_USER_AGENT }}
         run: python -m ingest.etf_metrics
 
-  # Separate manual job for DERA quarterly refresh — runs only when triggered
-  # (the DERA dataset publishes ~4x/year, so cron is wasteful).
+  # ──────────────────────────────────────────────────────────────────
+  # SMART-MONEY PIPELINE — powers /signals, /events, /holdings, /positions
+  # ──────────────────────────────────────────────────────────────────
+  smart-money:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: requirements.txt
+      - run: pip install -r requirements.txt
+
+      # Step 1: Poll EDGAR for new filings from all tracked filers.
+      # Writes raw filings (13F, 13D, Form 4, 8-K) into filings_raw.
+      - name: Poll EDGAR for new filings
+        run: python -m ingest.edgar
+        continue-on-error: true
+
+      # Step 2: Parse 13F-HR filings → holdings_13f rows.
+      - name: Parse 13F holdings
+        run: python -m ingest.parse_13f
+        continue-on-error: true
+
+      # Step 3: Parse 13D / 13G filings → events_13d rows.
+      - name: Parse 13D/13G events
+        run: python -m ingest.parse_13d
+        continue-on-error: true
+
+      # Step 4: Parse Form 4 insider transactions for tracked filers.
+      - name: Parse Form 4 for tracked filers
+        run: python -m ingest.parse_form4
+        continue-on-error: true
+
+      # Step 5: Universe-wide Form 4 scan (Lakonishok-Lee insider cluster signal).
+      - name: Form 4 universe scan (for insider clusters)
+        run: python -m ingest.form4_universe --days 7
+        continue-on-error: true
+
+      # Step 6: Daily price snapshot for the investable ticker universe.
+      - name: Daily price snapshot
+        run: python -m ingest.prices
+        continue-on-error: true
+
+      # Step 7: LLM-summarize new 8-K filings (Groq free tier).
+      # Limit to 20 per run to avoid rate limits; backlog clears over multiple days.
+      - name: Summarize new 8-K filings
+        run: python -m ingest.summarize_8k --limit 20
+        continue-on-error: true
+
+  # ──────────────────────────────────────────────────────────────────
+  # MANUAL: DERA quarterly refresh (4x/year, when SEC publishes new zip)
+  # ──────────────────────────────────────────────────────────────────
   dera-refresh:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
@@ -82,8 +120,4 @@ jobs:
           cache-dependency-path: requirements.txt
       - run: pip install -r requirements.txt
       - name: Refresh DERA monthly (latest quarter only)
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
-          EDGAR_USER_AGENT: ${{ secrets.EDGAR_USER_AGENT }}
         run: python -m ingest.etf_flows_monthly --years 0.5

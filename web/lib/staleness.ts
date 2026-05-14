@@ -13,14 +13,18 @@ export type StalenessCheck = {
 };
 
 const CHECKS: { source: string; table: string; date_col: string; threshold_days: number }[] = [
+  // ─── ETF flow pipeline ──────────────────────────────────────────────
   // Yahoo daily AUM — runs nightly, should always be within 4 days (weekend + holiday cushion)
   { source: "Yahoo daily AUM",     table: "etf_aum_daily",     date_col: "as_of_date",    threshold_days: 4 },
   // iShares daily — same cadence
   { source: "iShares daily",        table: "etf_shares_daily",  date_col: "as_of_date",    threshold_days: 4 },
-  // N-PORT individual filings refresh weekly; allow 14 days
-  { source: "Public N-PORT XML",    table: "etf_flows",         date_col: "snapshot_date", threshold_days: 110 }, // newest filings are ~60-90 days behind their period
+  // N-PORT individual filings refresh weekly; newest are ~60-90 days behind their period
+  { source: "Public N-PORT XML",    table: "etf_flows",         date_col: "snapshot_date", threshold_days: 110 },
   // DERA quarterly bulk — updates 1x per quarter
   { source: "DERA bulk N-PORT",     table: "etf_flows_monthly", date_col: "month_end",     threshold_days: 200 },
+  // ─── Smart-money pipeline (filings, events, signals, holdings) ──────
+  // EDGAR filings poll runs daily — newest filing fetched should be within ~4 days
+  { source: "EDGAR filings poll",   table: "filings_raw",       date_col: "filed_at",      threshold_days: 7 },
 ];
 
 export async function runStalenessChecks(): Promise<StalenessCheck[]> {
@@ -51,11 +55,13 @@ export async function runStalenessChecks(): Promise<StalenessCheck[]> {
       });
       continue;
     }
-    const ms = today.getTime() - new Date(latest + "T00:00:00").getTime();
+    // Handle both date (YYYY-MM-DD) and timestamptz (YYYY-MM-DDTHH:MM:SS+TZ) columns
+    const dateOnly = latest.slice(0, 10);
+    const ms = today.getTime() - new Date(dateOnly + "T00:00:00").getTime();
     const age_days = Math.floor(ms / 86400000);
     results.push({
       source: c.source,
-      latest,
+      latest: dateOnly,
       age_days,
       threshold_days: c.threshold_days,
       ok: age_days <= c.threshold_days,
