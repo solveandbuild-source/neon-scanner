@@ -301,12 +301,55 @@ function RotationMatrix({ rows }: { rows: Row[] }) {
   return (
     <div className="rounded-md border border-neutral-800 p-4">
       <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto">
+        {/* Subtle quadrant tints (existing) */}
         <rect x={sx(0)} y={PAD} width={W - PAD - sx(0)} height={sy(0) - PAD} fill="rgb(6 78 59 / 0.20)" />
         <rect x={PAD} y={PAD} width={sx(0) - PAD} height={sy(0) - PAD} fill="rgb(2 132 199 / 0.18)" />
         <rect x={sx(0)} y={sy(0)} width={W - PAD - sx(0)} height={H - PAD - sy(0)} fill="rgb(180 83 9 / 0.18)" />
         <rect x={PAD} y={sy(0)} width={sx(0) - PAD} height={H - PAD - sy(0)} fill="rgb(127 29 29 / 0.18)" />
+
+        {/* BUY ZONE — Accumulation quadrant (top-left): price ↓, flow ↑ */}
+        <rect
+          x={PAD} y={PAD}
+          width={sx(0) - PAD} height={sy(0) - PAD}
+          fill="none"
+          stroke="rgb(110 231 183)" strokeWidth={2} strokeDasharray="6 4"
+          opacity={0.7}
+        />
+        <text
+          x={(PAD + sx(0)) / 2} y={(PAD + sy(0)) / 2}
+          textAnchor="middle"
+          className="fill-emerald-200/40"
+          fontSize="42"
+          fontWeight="700"
+          letterSpacing="3"
+        >
+          BUY
+        </text>
+
+        {/* SELL ZONE — Distribution quadrant (bottom-right): price ↑, flow ↓ */}
+        <rect
+          x={sx(0)} y={sy(0)}
+          width={W - PAD - sx(0)} height={H - PAD - sy(0)}
+          fill="none"
+          stroke="rgb(252 165 165)" strokeWidth={2} strokeDasharray="6 4"
+          opacity={0.7}
+        />
+        <text
+          x={(sx(0) + W - PAD) / 2} y={(sy(0) + H - PAD) / 2 + 14}
+          textAnchor="middle"
+          className="fill-red-200/40"
+          fontSize="42"
+          fontWeight="700"
+          letterSpacing="3"
+        >
+          SELL
+        </text>
+
+        {/* Axes */}
         <line x1={PAD} y1={sy(0)} x2={W - PAD} y2={sy(0)} stroke="rgb(82 82 82)" strokeWidth={1} />
         <line x1={sx(0)} y1={PAD} x2={sx(0)} y2={H - PAD} stroke="rgb(82 82 82)" strokeWidth={1} />
+
+        {/* Quadrant labels — kept for clarity */}
         <text x={W - PAD - 8} y={PAD + 14} textAnchor="end" className="fill-emerald-300/80" fontSize="11">Leaders (price ↑ flow ↑)</text>
         <text x={PAD + 8} y={PAD + 14} className="fill-sky-300/80" fontSize="11">Accumulation (price ↓ flow ↑)</text>
         <text x={W - PAD - 8} y={H - PAD - 6} textAnchor="end" className="fill-amber-300/80" fontSize="11">Distribution (price ↑ flow ↓)</text>
@@ -331,7 +374,10 @@ function RotationMatrix({ rows }: { rows: Row[] }) {
         })}
       </svg>
       <p className="mt-3 text-xs text-neutral-500">
-        Each dot is one ETF. Position = 3M price return × 3M flow %. Top-right = confirmed leaders (price up + money in); top-left = accumulation (price down + money in); bottom-right = distribution (price up + money out); bottom-left = both leaving.
+        Each dot is one ETF. Position = 3M price return × 3M flow %.{" "}
+        <span className="text-emerald-300">BUY zone</span> (top-left, dashed green): price down but money flowing in — smart-money accumulation on weakness.{" "}
+        <span className="text-red-300">SELL zone</span> (bottom-right, dashed red): price up but money leaving — distribution.{" "}
+        Top-right is the trend-following Leaders quadrant — strong but watch for late-stage crowding; bottom-left is sustained outflow.
       </p>
     </div>
   );
@@ -478,8 +524,6 @@ export default async function FlowsPage({
           <span className="text-neutral-300">A fund&apos;s price can rise while money leaves it (people taking profits) and fall while money flows in (people buying the dip). The disagreement is often the signal — that&apos;s why both columns are shown.</span>
         </div>
 
-        <TfPills selected={selected} />
-
         {/* STALENESS BANNER — fires loud when any ingest pipeline stops updating */}
         {stalenessIssues.length > 0 && (
           <div className="rounded-md border border-red-700/60 bg-red-950/30 p-3 text-xs">
@@ -602,8 +646,11 @@ export default async function FlowsPage({
         <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-400 mb-3">
           All ETFs — price + flow + reading
         </h2>
+        <div className="mb-3">
+          <TfPills selected={selected} />
+        </div>
         <p className="text-xs text-neutral-500 mb-2">
-          Showing {selected.map((t) => TF_LABEL[t]).join(" + ")}. Toggle pills above to add or remove timeframes.
+          Showing {selected.map((t) => TF_LABEL[t]).join(" + ")}.
         </p>
         <div className="rounded-md border border-neutral-800 overflow-x-auto">
           <table className="w-full text-sm">
