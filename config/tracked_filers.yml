@@ -260,6 +260,113 @@ filers:
     category: activist
     multiplier: 2.0
 
+  # ─── mid-cap / small-cap specialists (multiplier 1.0) ───────────────────
+  # Added May 2026 to close the coverage gap on mid-cap names like Photronics
+  # that our large-fund list misses. These funds are known for thesis-driven
+  # picks in the $1-20B market-cap range where the heavyweights don't operate.
+  - name: "Royce & Associates LP"
+    cik: "0000906304"
+    category: value
+    multiplier: 1.0
+
+  - name: "Wasatch Advisors"
+    cik: "0000814133"
+    category: growth
+    multiplier: 1.0
+
+  - name: "Diamond Hill Capital Management"
+    cik: "0001217541"
+    category: value
+    multiplier: 1.0
+
+  - name: "Pzena Investment Management"
+    cik: "0001027796"
+    category: value
+    multiplier: 1.0
+
+  - name: "Hotchkis & Wiley Capital Management"
+    cik: "0001164833"
+    category: value
+    multiplier: 1.0
+
+  - name: "Tweedy, Browne Company"
+    cik: "0000732905"
+    category: value
+    multiplier: 1.0
+
+  - name: "First Pacific Advisors (FPA)"
+    cik: "0001377581"
+    category: value
+    multiplier: 1.0
+
+  - name: "Aristotle Capital Management"
+    cik: "0000860644"
+    category: value
+    multiplier: 1.0
+
+  - name: "Polen Capital Management"
+    cik: "0001034524"
+    category: growth
+    multiplier: 1.0
+
+  - name: "Sands Capital Management"
+    cik: "0001020066"
+    category: growth
+    multiplier: 1.0
+
+  - name: "Wedgewood Partners"
+    cik: "0000859804"
+    category: concentrated
+    multiplier: 1.0
+
+  - name: "Cantillon Capital Management"
+    cik: "0001279936"
+    category: growth
+    multiplier: 1.0
+
+  # ─── sector specialists — biotech (multiplier 1.0) ──────────────────────
+  - name: "Baker Bros Advisors"
+    cik: "0001263508"
+    category: concentrated
+    multiplier: 1.0
+
+  - name: "RA Capital Management"
+    cik: "0001346824"
+    category: concentrated
+    multiplier: 1.0
+
+  - name: "Casdin Capital"
+    cik: "0001534261"
+    category: concentrated
+    multiplier: 1.0
+
+  # ─── sector specialists — tech (multiplier 1.0) ─────────────────────────
+  - name: "Whale Rock Capital Management"
+    cik: "0001387322"
+    category: growth
+    multiplier: 1.0
+
+  # ─── mid-cap focused activists (multiplier 2.0) ─────────────────────────
+  - name: "Macellum Advisors GP"
+    cik: "0001536216"
+    category: activist
+    multiplier: 2.0
+
+  - name: "Politan Capital Management"
+    cik: "0001885245"
+    category: activist
+    multiplier: 2.0
+
+  - name: "Land & Buildings Investment Management"
+    cik: "0001536520"
+    category: activist
+    multiplier: 2.0
+
+  - name: "Ancora Advisors"
+    cik: "0001446114"
+    category: activist
+    multiplier: 2.0
+
   # ─── macro (multiplier 1.0, low coverage_pct annotation in web/lib/filers.ts) ─
   # Bass's book is mostly sovereign macro / credit — 13F shows ~10% of it.
   # Re-added under the softened rule: don't exclude on coverage, annotate

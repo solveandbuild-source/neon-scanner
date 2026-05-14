@@ -92,7 +92,11 @@ jobs:
         run: python -m ingest.parse_form4
         continue-on-error: true
 
-      - name: Form 4 universe scan (insider clusters)
+      - name: Form 4 universe scan — incremental (last 7 days)
+        # Daily scraper for the current quarter (not yet in SEC's bulk dataset).
+        # SEC bulk Form 4 dataset publishes quarterly ~6 weeks after quarter end,
+        # so the daily scrape only fills the gap between (last published bulk)
+        # and (today). With bulk backfill done, this is fast — ~7 daily indices.
         run: python -m ingest.form4_universe --days 7
         continue-on-error: true
 
@@ -122,3 +126,8 @@ jobs:
       - run: pip install -r requirements.txt
       - name: Refresh DERA monthly (latest quarter only)
         run: python -m ingest.etf_flows_monthly --years 0.5
+
+      - name: Refresh SEC bulk Form 4 dataset (latest quarter)
+        # Insider transactions bulk dataset — 4x/year SEC publish cadence.
+        # ~10 sec per quarter, single-shot vs the slow daily scraper.
+        run: python -m ingest.form4_universe_bulk --years 0.5
