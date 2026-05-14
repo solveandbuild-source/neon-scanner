@@ -181,6 +181,11 @@ If the bear case is stronger than the bull case, SAY SO and recommend pass.
 }
 
 export async function runAnalysis(ticker: string): Promise<{ ok: boolean; error?: string }> {
+  // TEMP DEBUG — surface env var state in the error path
+  const keyRaw = process.env.GROQ_API_KEY ?? "";
+  const keyTrimmed = keyRaw.trim().replace(/^["']|["']$/g, "");
+  const debugSuffix = ` [dbg len=${keyRaw.length} trimLen=${keyTrimmed.length} startsGsk=${keyTrimmed.startsWith("gsk_")}]`;
+
   const sb = supabaseServer();
   const { data: sig } = await sb.from("signals_latest").select("*").eq("ticker", ticker).maybeSingle();
   if (!sig) return { ok: false, error: "No signal data for this ticker" };
@@ -189,7 +194,7 @@ export async function runAnalysis(ticker: string): Promise<{ ok: boolean; error?
 
   const resp = await fetch(GROQ_URL, {
     method: "POST",
-    headers: { Authorization: `Bearer ${GROQ_API_KEY}`, "Content-Type": "application/json" },
+    headers: { Authorization: `Bearer ${keyTrimmed}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       model: GROQ_MODEL,
       messages: [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: userPrompt }],
@@ -199,7 +204,7 @@ export async function runAnalysis(ticker: string): Promise<{ ok: boolean; error?
   });
   if (!resp.ok) {
     const txt = await resp.text();
-    return { ok: false, error: `Groq ${resp.status}: ${txt.slice(0, 200)}` };
+    return { ok: false, error: `Groq ${resp.status}: ${txt.slice(0, 200)}${debugSuffix}` };
   }
   const data = await resp.json();
   const content = data.choices?.[0]?.message?.content ?? "";
