@@ -1,6 +1,7 @@
 import { supabaseServer } from "@/lib/supabase";
 import { getWatchlist } from "@/lib/watchlist";
 import { WatchlistToggle } from "@/components/WatchlistToggle";
+import { filerInfoByName, filerShortLabel } from "@/lib/filers";
 import Link from "next/link";
 
 // /signals — BUY signal table, read from signals_latest.
@@ -231,8 +232,30 @@ export default async function SignalsPage({
                     </td>
                     <td className="px-3 py-2 text-right text-neutral-300 tabular-nums">{s.num_sources}</td>
                     <td className="px-3 py-2 text-xs text-neutral-400 font-mono whitespace-nowrap" title={tooltipLines}>{breakdown}</td>
-                    <td className="px-3 py-2 text-xs text-neutral-400 max-w-xs truncate" title={allFilersTooltip}>
-                      {topFilersDisplay.join(", ")}{dedupFilers.length > 2 ? ` +${dedupFilers.length - 2}` : ""}
+                    <td className="px-3 py-2 text-xs text-neutral-400 max-w-md" title={allFilersTooltip}>
+                      <div className="flex flex-wrap gap-x-2 gap-y-1">
+                        {topFilersDisplay.map((fullName, i) => {
+                          const info = filerInfoByName(fullName);
+                          const t = info?.signalTier ?? "B";
+                          const tierColor =
+                            t === "S" ? "bg-emerald-600/30 text-emerald-300 border border-emerald-700/50" :
+                            t === "A" ? "bg-sky-600/30 text-sky-300 border border-sky-700/50" :
+                            t === "C" ? "bg-neutral-800 text-neutral-500 border border-neutral-700" :
+                                        "bg-neutral-800 text-neutral-400 border border-neutral-700";
+                          return (
+                            <span key={i} className="inline-flex items-baseline gap-1 whitespace-nowrap" title={info?.badge || fullName}>
+                              <span className={`px-1 text-[10px] font-mono rounded ${tierColor}`}>{t}</span>
+                              <span className="text-neutral-300">{filerShortLabel(fullName)}</span>
+                              {info?.badge && (
+                                <span className="text-neutral-500 italic text-[11px]">— {info.badge}</span>
+                              )}
+                            </span>
+                          );
+                        })}
+                        {dedupFilers.length > 2 && (
+                          <span className="text-neutral-500 italic">+{dedupFilers.length - 2} more</span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-3 py-2 text-xs text-neutral-400 tabular-nums">{s.first_detected_at ?? "—"}</td>
                     <td className="px-3 py-2 text-xs text-neutral-400 tabular-nums">{s.latest_signal_at ?? "—"}</td>
