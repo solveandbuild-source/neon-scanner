@@ -1,17 +1,18 @@
-name: Daily ETF flow ingest
+name: Daily ingest
 
-# Runs in GitHub-hosted runners (cloud) so it works regardless of whether
-# the user's laptop is on. Free tier limits (2000 min/month for private repos)
-# easily cover the daily runs.
+# Runs in GitHub-hosted runners so it works regardless of whether the user's
+# laptop is on. Free tier (2000 min/month for private repos) easily covers.
+#
+# Structure: 2 parallel jobs that DON'T overlap each other on the same external
+# service. Yahoo-touching scripts are serialised inside one job; SEC EDGAR
+# scripts in the other. Both jobs share secrets via env: at workflow level.
 
 on:
   schedule:
     # 22:00 UTC weekdays = 6 PM ET (winter) / 5 PM ET (summer).
-    # After US market close in all DST scenarios.
     - cron: '0 22 * * 1-5'
-  workflow_dispatch:    # allow manual trigger from the Actions tab
+  workflow_dispatch:
 
-# Prevent overlapping runs
 concurrency:
   group: daily-ingest
   cancel-in-progress: false
@@ -24,13 +25,13 @@ env:
 
 jobs:
   # ──────────────────────────────────────────────────────────────────
-  # FLOWS PIPELINE — powers /flows dashboard (ETF rotation)
+  # YAHOO PIPELINE — every ingest that hits Yahoo Finance.
+  # Serialised so we never have two yfinance loops hitting Yahoo from
+  # the same GH runner IP simultaneously (which risks rate-limit/ban).
   # ──────────────────────────────────────────────────────────────────
-  etf-flows:
+  yahoo:
     runs-on: ubuntu-latest
-    # Monday N-PORT XML refresh walks 32 CIKs at EDGAR's polite rate limit,
-    # taking ~25 min on its own. Give plenty of headroom.
-    timeout-minutes: 45
+    timeout-minutes: 90    # prices.py alone at 0.3s × 10K = ~50min
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -42,24 +43,30 @@ jobs:
 
       - name: Capture Yahoo daily AUM (all 34 ETFs)
         run: python -m ingest.etf_aum_yahoo
+        continue-on-error: true
 
       - name: Refresh iShares daily (10 ETFs)
+        # iShares.com endpoint, NOT Yahoo — placed here for serial-with-yahoo
+        # convenience since it's quick.
         run: python -m ingest.etf_shares_ishares --days 7
+        continue-on-error: true
 
-      - name: Refresh public N-PORT XML (Mondays only)
-        if: ${{ github.event.schedule == '0 22 * * 1' || github.event_name == 'workflow_dispatch' }}
-        run: python -m ingest.etf_flows --years 1
+      - name: Daily price snapshot (universe — ~10K tickers @ 0.3s/tick = ~50min)
+        run: python -m ingest.prices
         continue-on-error: true
 
       - name: Rebuild etf_metrics
+        # Reads Supabase + light Yahoo touches per-ticker
         run: python -m ingest.etf_metrics
+        continue-on-error: true
 
   # ──────────────────────────────────────────────────────────────────
-  # SMART-MONEY PIPELINE — powers /signals, /events, /holdings, /positions
+  # SEC EDGAR PIPELINE — every ingest that hits sec.gov.
+  # All scripts use 8 req/sec pacing (under SEC's 10/s limit).
   # ──────────────────────────────────────────────────────────────────
-  smart-money:
+  sec-edgar:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -69,41 +76,33 @@ jobs:
           cache-dependency-path: requirements.txt
       - run: pip install -r requirements.txt
 
-      # Step 1: Poll EDGAR for new filings from all tracked filers.
-      # Writes raw filings (13F, 13D, Form 4, 8-K) into filings_raw.
       - name: Poll EDGAR for new filings
         run: python -m ingest.edgar
         continue-on-error: true
 
-      # Step 2: Parse 13F-HR filings → holdings_13f rows.
       - name: Parse 13F holdings
         run: python -m ingest.parse_13f
         continue-on-error: true
 
-      # Step 3: Parse 13D / 13G filings → events_13d rows.
       - name: Parse 13D/13G events
         run: python -m ingest.parse_13d
         continue-on-error: true
 
-      # Step 4: Parse Form 4 insider transactions for tracked filers.
       - name: Parse Form 4 for tracked filers
         run: python -m ingest.parse_form4
         continue-on-error: true
 
-      # Step 5: Universe-wide Form 4 scan (Lakonishok-Lee insider cluster signal).
-      - name: Form 4 universe scan (for insider clusters)
+      - name: Form 4 universe scan (insider clusters)
         run: python -m ingest.form4_universe --days 7
         continue-on-error: true
 
-      # Step 6: Daily price snapshot for the investable ticker universe.
-      - name: Daily price snapshot
-        run: python -m ingest.prices
+      - name: Summarize new 8-K filings (Groq, ~10/min limit)
+        run: python -m ingest.summarize_8k --limit 20
         continue-on-error: true
 
-      # Step 7: LLM-summarize new 8-K filings (Groq free tier).
-      # Limit to 20 per run to avoid rate limits; backlog clears over multiple days.
-      - name: Summarize new 8-K filings
-        run: python -m ingest.summarize_8k --limit 20
+      - name: Refresh public N-PORT XML (Mondays only)
+        if: ${{ github.event.schedule == '0 22 * * 1' || github.event_name == 'workflow_dispatch' }}
+        run: python -m ingest.etf_flows --years 1
         continue-on-error: true
 
   # ──────────────────────────────────────────────────────────────────

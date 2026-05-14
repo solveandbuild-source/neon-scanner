@@ -343,6 +343,9 @@ def main() -> None:
 
     rows: list[dict[str, Any]] = []
     for i, ticker in enumerate(tickers, 1):
+        # Polite to Yahoo — ~2.5 req/sec sustained, well under their burst limit
+        if i > 1:
+            time.sleep(0.4)
         try:
             t = yf.Ticker(ticker)
             # 2y history covers our deepest 1Y window + previous-snapshot lookback

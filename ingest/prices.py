@@ -164,6 +164,10 @@ def main() -> None:
     t0 = time.monotonic()
     ok = fail = 0
     for i, t in enumerate(tickers, 1):
+        # Polite to Yahoo: 0.3s/ticker = ~3 req/sec. For 10K tickers this is
+        # ~50 min — within job timeout. Without pacing we'd get banned.
+        if i > 1:
+            time.sleep(0.3)
         stats = fetch_price_for_ticker(yf, t["ticker"])
         try:
             upsert_ticker(sb, t["ticker"], t["name"], stats)
