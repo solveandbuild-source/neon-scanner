@@ -1,6 +1,22 @@
-# Tracked filers — 29 fund managers + 10 corporate strategic investors.
+# Tracked filers — 45 fund managers + 10 corporate strategic investors.
 #
-# Categories:
+# Each entry has:
+#   category   - broad strategy: value / concentrated / growth / activist /
+#                macro / corporate_strategic
+#   multiplier - category-level weight used by compute_buy_signals.py
+#   tier       - signal-quality tier: S / A / B / C (added May 2026)
+#                Maps to tier_multiplier in compute_buy_signals.py:
+#                  S = 1.5×  (top 10 generational track records / unique edge)
+#                  A = 1.2×  (strong second tier — proven multi-decade or specialist edge)
+#                  B = 1.0×  (default; solid manager with no individual star factor)
+#                  C = 0.7×  (mixed recent track record — de-weight)
+#                Final filer weight = category multiplier × tier multiplier.
+#   badge      - 2-4 word plain-English description of what makes this
+#                manager known. Surfaced in /signals UI alongside the name
+#                so a beginner can read "Buys when everyone panics — Tepper"
+#                and understand the signal without a glossary.
+#
+# Categories (broad strategy):
 #   value                - long-horizon value/generalist managers
 #   concentrated         - high-conviction concentrated/contrarian books
 #   growth               - growth/tech books (Tiger cubs)
@@ -41,224 +57,312 @@ filers:
     cik: "0001067983"
     category: value
     multiplier: 1.0
+    tier: S
+    badge: "Buys best businesses forever"
 
   - name: "Duquesne Family Office (Druckenmiller)"
     cik: "0001536411"
     category: value
     multiplier: 1.0
+    tier: S
+    badge: "Trades the future early"
 
   - name: "Baupost Group (Klarman)"
     cik: "0001061768"
     category: value
     multiplier: 1.0
+    tier: S
+    badge: "Waits years for true bargains"
 
   - name: "Appaloosa Management (Tepper)"
     cik: "0001006438"
     category: value
     multiplier: 1.0
+    tier: S
+    badge: "Buys when everyone panics"
 
   - name: "Oaktree Capital (Marks)"
     cik: "0000949509"
     category: value
     multiplier: 1.0
+    tier: S
+    badge: "Buys at the cycle bottom"
 
   - name: "Pabrai Investment Funds (Pabrai)"
     cik:       # TODO
     category: value
     multiplier: 1.0
+    tier: S
+    badge: "Few bets, Buffett-style"
 
   - name: "Greenlight Capital (Einhorn)"
     cik: "0001079114"
     category: value
     multiplier: 1.0
+    tier: A
+    badge: "Spots frauds, buys cheap"
 
   - name: "Gotham Asset Management (Greenblatt)"
     cik: "0001510387"
     category: value
     multiplier: 1.0
+    tier: B
+    badge: "Formula-driven cheap stocks"
 
   - name: "Fairholme Capital (Berkowitz)"
     cik: "0001056831"
     category: value
     multiplier: 1.0
+    tier: C
+    badge: "Concentrated value (struggled)"
 
   - name: "Fairfax Financial (Watsa)"
     cik: "0000915191"
     category: value
     multiplier: 1.0
+    tier: B
+    badge: "Holds quality businesses long-term"
 
   - name: "Southeastern Asset Management / Longleaf Partners (Hawkins)"
     cik: "0000807985"
     category: value
     multiplier: 1.0
+    tier: C
+    badge: "Holds value long-term (faded)"
 
   - name: "First Eagle Investment Management (McLennan)"
     cik: "0001325447"
     category: value
     multiplier: 1.0
+    tier: B
+    badge: "Quality stocks + gold tilt"
 
   # ─── concentrated / contrarian (multiplier 1.0) ──────────────────────────
   - name: "Scion Asset Management (Burry)"
     cik: "0001649339"
     category: concentrated
     multiplier: 1.0
+    tier: S
+    badge: "Bets against bubbles early"
 
   - name: "Semper Augustus Investments (Bloomstran)"
     cik: "0001115373"
     category: concentrated
     multiplier: 1.0
+    tier: B
+    badge: "Few concentrated value bets"
 
   - name: "Valley Forge Capital (Kantesaria)"
     cik: "0001697868"
     category: concentrated
     multiplier: 1.0
+    tier: B
+    badge: "Few concentrated quality bets"
 
   - name: "Lyrical Asset Management (Wellington)"
     cik: "0001542302"
     category: concentrated
     multiplier: 1.0
+    tier: B
+    badge: "Formula-driven cheap stocks"
 
   - name: "Situational Awareness LP (Aschenbrenner)"
     cik: "0002045724"
     category: concentrated
     multiplier: 1.0
+    tier: S
+    badge: "All-in on AI infrastructure"
 
   - name: "Akre Capital Management (Akre)"
     cik: "0001112520"
     category: concentrated
     multiplier: 1.0
+    tier: A
+    badge: "Buys best businesses forever"
 
   - name: "Brave Warrior Advisors (Greenberg)"
     cik: "0001553733"
     category: concentrated
     multiplier: 1.0
+    tier: B
+    badge: "Few concentrated value bets"
 
   - name: "Glenview Capital Management (Robbins)"
     cik: "0001138995"
     category: concentrated
     multiplier: 1.0
+    tier: B
+    badge: "Healthcare sector specialist"
 
   - name: "Perceptive Advisors (Edelman)"
     cik: "0001224962"
     category: concentrated
     multiplier: 1.0
+    tier: A
+    badge: "Biotech specialist"
 
   - name: "Soroban Capital Partners (Mandelblatt)"
     cik: "0001517857"
     category: concentrated
     multiplier: 1.0
+    tier: B
+    badge: "Math-driven macro tilts"
 
   # ─── growth / tech (multiplier 1.0) ──────────────────────────────────────
   - name: "Tiger Global Management (Coleman)"
     cik: "0001167483"
     category: growth
     multiplier: 1.0
+    tier: B
+    badge: "Tech bets (public + private)"
 
   - name: "Coatue Management (Laffont)"
     cik: "0001135730"
     category: growth
     multiplier: 1.0
+    tier: B
+    badge: "Tech bets (public + private)"
 
   - name: "Lone Pine Capital (Mandel)"
     cik: "0001061165"
     category: growth
     multiplier: 1.0
+    tier: A
+    badge: "Best long-term growth picker"
 
   - name: "Viking Global Investors (Halvorsen)"
     cik: "0001103804"
     category: growth
     multiplier: 1.0
+    tier: A
+    badge: "Steady growth, long + short"
 
   - name: "Maverick Capital (Ainslie)"
     cik: "0000934639"
     category: growth
     multiplier: 1.0
+    tier: B
+    badge: "Tech: long + short bets"
 
   - name: "D1 Capital Partners (Sundheim)"
     cik: "0001747057"
     category: growth
     multiplier: 1.0
+    tier: B
+    badge: "Growth bets (public + private)"
 
   - name: "Light Street Capital Management (Kacher)"
     cik: "0001569049"
     category: growth
     multiplier: 1.0
+    tier: B
+    badge: "Tech growth bets"
 
   - name: "Holocene Advisors (Haley)"
     cik: "0001700574"
     category: growth
     multiplier: 1.0
+    tier: B
+    badge: "Math-driven multi-strategy"
 
   # ─── activists (multiplier 2.0 — heaviest in scorer) ─────────────────────
   - name: "Pershing Square Capital Management (Ackman)"
     cik: "0001336528"
     category: activist
     multiplier: 2.0
+    tier: S
+    badge: "Big bets, public fights"
 
   - name: "Third Point LLC (Loeb)"
     cik: "0001040273"
     category: activist
     multiplier: 2.0
+    tier: A
+    badge: "Public fights with CEOs"
 
   - name: "Icahn Capital (Icahn)"
     cik: "0001412093"
     category: activist
     multiplier: 2.0
+    tier: C
+    badge: "Famous old activist (fading)"
 
   - name: "Trian Fund Management (Peltz)"
     cik: "0001345471"
     category: activist
     multiplier: 2.0
+    tier: B
+    badge: "Activist on big brands"
 
   - name: "Elliott Investment Management (Singer)"
     cik: "0001791786"
     category: activist
     multiplier: 2.0
+    tier: S
+    badge: "The most feared activist"
 
   - name: "Starboard Value LP (Smith)"
     cik: "0001517137"
     category: activist
     multiplier: 2.0
+    tier: A
+    badge: "Pushes companies to cut costs"
 
   - name: "Corvex Management (Meister)"
     cik: "0001535472"
     category: activist
     multiplier: 2.0
+    tier: B
+    badge: "Mid-size company activist"
 
   - name: "ValueAct Capital Management"
     cik: "0001418814"
     category: activist
     multiplier: 2.0
+    tier: A
+    badge: "Activist without public fight"
 
   - name: "Inclusive Capital Partners (Ubben)"
     cik: "0001817187"
     category: activist
     multiplier: 2.0
+    tier: B
+    badge: "Activist for sustainability"
 
   - name: "JANA Partners (Rosenstein)"
     cik: "0001159159"
     category: activist
     multiplier: 2.0
+    tier: B
+    badge: "Mid-size company activist"
 
   - name: "Sachem Head Capital Management (Ferguson)"
     cik: "0001582090"
     category: activist
     multiplier: 2.0
+    tier: B
+    badge: "Mid-size company activist"
 
   - name: "Mantle Ridge LP (Hilal)"
     cik: "0001695459"
     category: activist
     multiplier: 2.0
+    tier: B
+    badge: "Few concentrated activist bets"
 
   - name: "Engaged Capital (Welling)"
     cik: "0001559771"
     category: activist
     multiplier: 2.0
+    tier: B
+    badge: "Small company activist"
 
   - name: "Engine Capital Management (Ajdler)"
     cik: "0001665590"
     category: activist
     multiplier: 2.0
+    tier: B
+    badge: "Tiny company activist"
 
   # ─── mid-cap / small-cap specialists (multiplier 1.0) ───────────────────
   # Added May 2026 to close the coverage gap on mid-cap names like Photronics
@@ -268,104 +372,144 @@ filers:
     cik: "0000906304"
     category: value
     multiplier: 1.0
+    tier: B
+    badge: "Small-cap value picks"
 
   - name: "Wasatch Advisors"
     cik: "0000814133"
     category: growth
     multiplier: 1.0
+    tier: B
+    badge: "Small-cap growth picks"
 
   - name: "Diamond Hill Capital Management"
     cik: "0001217541"
     category: value
     multiplier: 1.0
+    tier: B
+    badge: "Mid-cap value picks"
 
   - name: "Pzena Investment Management"
     cik: "0001027796"
     category: value
     multiplier: 1.0
+    tier: A
+    badge: "Buys statistically cheap stocks"
 
   - name: "Hotchkis & Wiley Capital Management"
     cik: "0001164833"
     category: value
     multiplier: 1.0
+    tier: B
+    badge: "Buys deeply cheap stocks"
 
   - name: "Tweedy, Browne Company"
     cik: "0000732905"
     category: value
     multiplier: 1.0
+    tier: B
+    badge: "Classic Graham-style value"
 
   - name: "First Pacific Advisors (FPA)"
     cik: "0001377581"
     category: value
     multiplier: 1.0
+    tier: B
+    badge: "Quality stocks, downside-focused"
 
   - name: "Aristotle Capital Management"
     cik: "0000860644"
     category: value
     multiplier: 1.0
+    tier: B
+    badge: "Quality mid-cap growth"
 
   - name: "Polen Capital Management"
     cik: "0001034524"
     category: growth
     multiplier: 1.0
+    tier: B
+    badge: "Few quality growth stocks"
 
   - name: "Sands Capital Management"
     cik: "0001020066"
     category: growth
     multiplier: 1.0
+    tier: B
+    badge: "Few quality growth stocks"
 
   - name: "Wedgewood Partners"
     cik: "0000859804"
     category: concentrated
     multiplier: 1.0
+    tier: B
+    badge: "Few concentrated growth bets"
 
   - name: "Cantillon Capital Management"
     cik: "0001279936"
     category: growth
     multiplier: 1.0
+    tier: B
+    badge: "Global quality growth stocks"
 
   # ─── sector specialists — biotech (multiplier 1.0) ──────────────────────
   - name: "Baker Bros Advisors"
     cik: "0001263508"
     category: concentrated
     multiplier: 1.0
+    tier: A
+    badge: "Top biotech fund"
 
   - name: "RA Capital Management"
     cik: "0001346824"
     category: concentrated
     multiplier: 1.0
+    tier: B
+    badge: "Biotech specialist"
 
   - name: "Casdin Capital"
     cik: "0001534261"
     category: concentrated
     multiplier: 1.0
+    tier: B
+    badge: "Biotech specialist"
 
   # ─── sector specialists — tech (multiplier 1.0) ─────────────────────────
   - name: "Whale Rock Capital Management"
     cik: "0001387322"
     category: growth
     multiplier: 1.0
+    tier: B
+    badge: "Tech sector specialist"
 
   # ─── mid-cap focused activists (multiplier 2.0) ─────────────────────────
   - name: "Macellum Advisors GP"
     cik: "0001536216"
     category: activist
     multiplier: 2.0
+    tier: B
+    badge: "Activist on retail companies"
 
   - name: "Politan Capital Management"
     cik: "0001885245"
     category: activist
     multiplier: 2.0
+    tier: B
+    badge: "Mid-size company activist"
 
   - name: "Land & Buildings Investment Management"
     cik: "0001536520"
     category: activist
     multiplier: 2.0
+    tier: A
+    badge: "Forces REITs to change"
 
   - name: "Ancora Advisors"
     cik: "0001446114"
     category: activist
     multiplier: 2.0
+    tier: B
+    badge: "Mid-size company activist"
 
   # ─── small-cap specialists (multiplier 1.0) ─────────────────────────────
   # Added May 2026 to catch the PLAB-style gap — small-cap names that the
@@ -376,51 +520,71 @@ filers:
     cik: "0001167212"
     category: growth
     multiplier: 1.0
+    tier: B
+    badge: "Small-cap tech bets"
 
   - name: "Mill Road Capital Management"
     cik: "0001512275"
     category: activist
     multiplier: 2.0
+    tier: B
+    badge: "Small company activist"
 
   - name: "Perritt Capital Management"
     cik: "0001279342"
     category: value
     multiplier: 1.0
+    tier: B
+    badge: "Microcap value picks"
 
   - name: "Pacific Ridge Capital Partners"
     cik: "0001591546"
     category: value
     multiplier: 1.0
+    tier: B
+    badge: "Small-cap value picks"
 
   - name: "Nierenberg Investment Management"
     cik: "0001282683"
     category: concentrated
     multiplier: 1.0
+    tier: B
+    badge: "Microcap concentrated bets"
 
   - name: "Bridge City Capital"
     cik: "0001713521"
     category: growth
     multiplier: 1.0
+    tier: B
+    badge: "Small-cap growth picks"
 
   - name: "Skylands Capital"
     cik: "0001299910"
     category: value
     multiplier: 1.0
+    tier: B
+    badge: "Small-cap value picks"
 
   - name: "Symmetry Peak Management"
     cik: "0001389234"
     category: concentrated
     multiplier: 1.0
+    tier: B
+    badge: "Microcap concentrated bets"
 
   - name: "Kestrel Investment Management"
     cik: "0000917579"
     category: value
     multiplier: 1.0
+    tier: B
+    badge: "Small-cap value picks"
 
   - name: "Meros Investment Management"
     cik: "0001911372"
     category: concentrated
     multiplier: 1.0
+    tier: B
+    badge: "Small-cap concentrated bets"
 
   # ─── macro (multiplier 1.0, low coverage_pct annotation in web/lib/filers.ts) ─
   # Bass's book is mostly sovereign macro / credit — 13F shows ~10% of it.
@@ -430,6 +594,8 @@ filers:
     cik: "0001420192"
     category: macro
     multiplier: 1.0
+    tier: C
+    badge: "Bets on country economies"
 
   # ─── corporate strategic investors (multiplier 1.5) ──────────────────────
   # These are public companies. They don't file 13F. Their strategic equity
@@ -441,51 +607,71 @@ filers:
     cik: "0001045810"
     category: corporate_strategic
     multiplier: 1.5
+    tier: S
+    badge: "Strategic AI stakes"
 
   - name: "Microsoft Corporation"
     cik: "0000789019"
     category: corporate_strategic
     multiplier: 1.5
+    tier: A
+    badge: "Strategic AI partnerships"
 
   - name: "Alphabet Inc."
     cik: "0001652044"
     category: corporate_strategic
     multiplier: 1.5
+    tier: B
+    badge: "Strategic AI defense buys"
 
   - name: "Amazon.com, Inc."
     cik: "0001018724"
     category: corporate_strategic
     multiplier: 1.5
+    tier: B
+    badge: "Strategic AI + logistics buys"
 
   - name: "Meta Platforms, Inc."
     cik: "0001326801"
     category: corporate_strategic
     multiplier: 1.5
+    tier: B
+    badge: "Strategic AI buys"
 
   - name: "Apple Inc."
     cik: "0000320193"
     category: corporate_strategic
     multiplier: 1.5
+    tier: A
+    badge: "Rare big strategic moves"
 
   - name: "Oracle Corporation"
     cik: "0001341439"
     category: corporate_strategic
     multiplier: 1.5
+    tier: B
+    badge: "Strategic cloud bets"
 
   - name: "Broadcom Inc."
     cik: "0001730168"
     category: corporate_strategic
     multiplier: 1.5
+    tier: B
+    badge: "Strategic tech acquisitions"
 
   - name: "Salesforce, Inc."
     cik: "0001108524"
     category: corporate_strategic
     multiplier: 1.5
+    tier: B
+    badge: "Strategic AI tools buys"
 
   - name: "Adobe Inc."
     cik: "0000796343"
     category: corporate_strategic
     multiplier: 1.5
+    tier: B
+    badge: "Strategic AI tools buys"
 
 # ─────────────────────────────────────────────────────────────────────────
 # Deliberate exclusions — do NOT re-add without reading CLAUDE.md §6.0:

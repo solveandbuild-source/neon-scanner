@@ -81,16 +81,29 @@ def main() -> None:
     print(f"Computing BUY signals as of {AS_OF}", flush=True)
 
     # ─── Filers + universe ──────────────────────────────────────────────
+    # Per CLAUDE.md §2.4: weighting must be transparent. Final filer weight
+    # = category multiplier × tier multiplier. Components remain visible
+    # in the signal breakdown so the user can audit why a score fired.
+    TIER_MULT = {"S": 1.5, "A": 1.2, "B": 1.0, "C": 0.7}
     with (PROJECT_ROOT / "config" / "tracked_filers.yml").open() as f:
         cfg = yaml.safe_load(f)
-    FILER_MULT, FILER_NAME = {}, {}
+    FILER_MULT, FILER_NAME, FILER_TIER, FILER_BADGE = {}, {}, {}, {}
     for fl in cfg["filers"]:
         if not fl.get("cik"):
             continue
         c = cik10(fl["cik"])
-        FILER_MULT[c] = fl.get("multiplier", 1.0)
+        cat_mult = fl.get("multiplier", 1.0)
+        tier = fl.get("tier", "B")
+        tier_mult = TIER_MULT.get(tier, 1.0)
+        FILER_MULT[c] = cat_mult * tier_mult
         FILER_NAME[c] = fl["name"]
-    print(f"  tracked filers: {len(FILER_MULT)}", flush=True)
+        FILER_TIER[c] = tier
+        FILER_BADGE[c] = fl.get("badge", "")
+    print(f"  tracked filers: {len(FILER_MULT)} "
+          f"(S={sum(1 for t in FILER_TIER.values() if t=='S')}, "
+          f"A={sum(1 for t in FILER_TIER.values() if t=='A')}, "
+          f"B={sum(1 for t in FILER_TIER.values() if t=='B')}, "
+          f"C={sum(1 for t in FILER_TIER.values() if t=='C')})", flush=True)
 
     universe_rows = paginated(sb, "tickers", "ticker,name,market_cap_usd")
     universe = {r["ticker"]: r for r in universe_rows}
