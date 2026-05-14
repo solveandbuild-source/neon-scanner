@@ -1,4 +1,7 @@
 import { supabaseServer } from "@/lib/supabase";
+import { getWatchlist } from "@/lib/watchlist";
+import { WatchlistToggle } from "@/components/WatchlistToggle";
+import Link from "next/link";
 
 // /signals — BUY signal table, read from signals_latest.
 // Default threshold: score ≥ 7. Filter at top: text box "min score".
@@ -100,7 +103,7 @@ export default async function SignalsPage({
   const sortKey: SortKey = sp.sort === "latest_signal" ? "latest_signal"
                         : sp.sort === "first_detected" ? "first_detected"
                         : "score";
-  const allSignals = await fetchSignals(sortKey);
+  const [allSignals, watchlistSet] = await Promise.all([fetchSignals(sortKey), getWatchlist()]);
   const signals = allSignals.filter((s) => s.score >= minScore);
   const totalCount = allSignals.length;
   const lastComputed = allSignals[0]?.computed_at ?? null;
@@ -117,6 +120,10 @@ export default async function SignalsPage({
         <p className="text-xs text-neutral-500">
           {totalCount} signals computed{lastComputed ? ` at ${new Date(lastComputed).toLocaleString()}` : ""}.
           Showing {signals.length} with score ≥ {minScore}.
+          {" · "}
+          <Link href="/signals/analysis" className="text-emerald-400 hover:underline">
+            View deep analysis ({watchlistSet.size} watchlisted)
+          </Link>
         </p>
       </header>
 
@@ -164,6 +171,7 @@ export default async function SignalsPage({
           <table className="w-full text-sm">
             <thead className="bg-neutral-900 text-left text-xs uppercase tracking-wider text-neutral-400">
               <tr>
+                <th className="px-2 py-2 font-medium w-10" title="Add to watchlist for deep analysis"></th>
                 <th className="px-3 py-2 font-medium">Ticker</th>
                 <th className="px-3 py-2 font-medium">Company</th>
                 <th className="px-3 py-2 font-medium text-right" title="Sum of all 7 signal-type contributions">Score</th>
@@ -212,6 +220,9 @@ export default async function SignalsPage({
                 const allFilersTooltip = dedupFilers.join("\n");
                 return (
                   <tr key={s.ticker} className="hover:bg-neutral-900/40">
+                    <td className="px-2 py-2">
+                      <WatchlistToggle ticker={s.ticker} initialAdded={watchlistSet.has(s.ticker)} />
+                    </td>
                     <td className="px-3 py-2 font-mono text-neutral-100">{s.ticker}</td>
                     <td className="px-3 py-2 text-neutral-300 max-w-xs truncate" title={s.company_name ?? ""}>{s.company_name ?? "—"}</td>
                     <td className="px-3 py-2 text-right tabular-nums">
