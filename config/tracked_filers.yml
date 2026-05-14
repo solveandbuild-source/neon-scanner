@@ -87,6 +87,16 @@ filers:
     category: value
     multiplier: 1.0
 
+  - name: "Southeastern Asset Management / Longleaf Partners (Hawkins)"
+    cik: "0000807985"
+    category: value
+    multiplier: 1.0
+
+  - name: "First Eagle Investment Management (McLennan)"
+    cik: "0001325447"
+    category: value
+    multiplier: 1.0
+
   # ─── concentrated / contrarian (multiplier 1.0) ──────────────────────────
   - name: "Scion Asset Management (Burry)"
     cik: "0001649339"
@@ -105,6 +115,36 @@ filers:
 
   - name: "Lyrical Asset Management (Wellington)"
     cik: "0001542302"
+    category: concentrated
+    multiplier: 1.0
+
+  - name: "Situational Awareness LP (Aschenbrenner)"
+    cik: "0002045724"
+    category: concentrated
+    multiplier: 1.0
+
+  - name: "Akre Capital Management (Akre)"
+    cik: "0001112520"
+    category: concentrated
+    multiplier: 1.0
+
+  - name: "Brave Warrior Advisors (Greenberg)"
+    cik: "0001553733"
+    category: concentrated
+    multiplier: 1.0
+
+  - name: "Glenview Capital Management (Robbins)"
+    cik: "0001138995"
+    category: concentrated
+    multiplier: 1.0
+
+  - name: "Perceptive Advisors (Edelman)"
+    cik: "0001224962"
+    category: concentrated
+    multiplier: 1.0
+
+  - name: "Soroban Capital Partners (Mandelblatt)"
+    cik: "0001517857"
     category: concentrated
     multiplier: 1.0
 
@@ -131,6 +171,21 @@ filers:
 
   - name: "Maverick Capital (Ainslie)"
     cik: "0000934639"
+    category: growth
+    multiplier: 1.0
+
+  - name: "D1 Capital Partners (Sundheim)"
+    cik: "0001747057"
+    category: growth
+    multiplier: 1.0
+
+  - name: "Light Street Capital Management (Kacher)"
+    cik: "0001569049"
+    category: growth
+    multiplier: 1.0
+
+  - name: "Holocene Advisors (Haley)"
+    cik: "0001700574"
     category: growth
     multiplier: 1.0
 
@@ -177,6 +232,31 @@ filers:
 
   - name: "Inclusive Capital Partners (Ubben)"
     cik: "0001817187"
+    category: activist
+    multiplier: 2.0
+
+  - name: "JANA Partners (Rosenstein)"
+    cik: "0001159159"
+    category: activist
+    multiplier: 2.0
+
+  - name: "Sachem Head Capital Management (Ferguson)"
+    cik: "0001582090"
+    category: activist
+    multiplier: 2.0
+
+  - name: "Mantle Ridge LP (Hilal)"
+    cik: "0001695459"
+    category: activist
+    multiplier: 2.0
+
+  - name: "Engaged Capital (Welling)"
+    cik: "0001559771"
+    category: activist
+    multiplier: 2.0
+
+  - name: "Engine Capital Management (Ajdler)"
+    cik: "0001665590"
     category: activist
     multiplier: 2.0
 
@@ -250,6 +330,8 @@ filers:
 #   - Bridgewater (Dalio)    — too diversified; 13F signal poor
 #   - Renaissance Technologies — mostly stat-arb noise
 #   - Soros Fund Management  — mostly bonds/macro; 13Fs unrepresentative
-# Count: 39 active filers = 29 fund managers + 10 corporate strategic.
+# Count: 55 active filers = 45 fund managers + 10 corporate strategic.
+# (29 base + 16 added in the May 2026 expansion: Aschenbrenner + the
+#  must-add 8 + strong-add 7 from the deep-research sweep.)
 # If editing, keep the count and the rationale aligned.
 # ─────────────────────────────────────────────────────────────────────────
