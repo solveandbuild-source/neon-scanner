@@ -136,13 +136,14 @@ schedule". Each item must be checkable via a Google search.
 def gather_context(sb: Client, ticker: str) -> dict[str, Any] | None:
     """Pull everything we know about ticker into a structured context dict."""
     # signals_latest row
-    r = sb.table("signals_latest").select("*").eq("ticker", ticker).maybeSingle().execute()
+    r = sb.table("signals_latest").select("*").eq("ticker", ticker).limit(1).execute()
     if not r.data:
         return None
-    sig = r.data
+    sig = r.data[0]
 
     # ticker name + market cap
-    t_row = sb.table("tickers").select("name,market_cap_usd").eq("ticker", ticker).maybeSingle().execute()
+    t_row_q = sb.table("tickers").select("name,market_cap_usd").eq("ticker", ticker).limit(1).execute()
+    t_row = type("X", (), {"data": (t_row_q.data[0] if t_row_q.data else {})})()
     company_name = (t_row.data or {}).get("name")
     market_cap = (t_row.data or {}).get("market_cap_usd")
 
