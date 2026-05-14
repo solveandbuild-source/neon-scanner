@@ -19,8 +19,8 @@ type TickerAgg = {
   latest_aum: number | null;
   latest_date: string | null;
   latest_price: number | null;
-  flow_1y: number;
-  flow_pct: number;       // flow as % of current AUM
+  flow_1y: number | null;       // null if no flow data
+  flow_pct: number | null;      // null if no AUM/no flow data
   price_return_1y: number | null;
   divergence: "money_chasing_price" | "money_leaving_winner" | "money_buying_dip" | "money_fleeing_loser" | "aligned" | "unknown";
   history: Snapshot[];
@@ -54,10 +54,15 @@ function aggregate(byTicker: Map<string, Snapshot[]>): TickerAgg[] {
   for (const meta of ETF_UNIVERSE) {
     const history = byTicker.get(meta.ticker) ?? [];
     const latest = history[history.length - 1];
-    const flow_1y = history
-      .filter((s) => s.snapshot_date >= cutoff_1y && s.daily_flow_usd != null)
-      .reduce((sum, s) => sum + (s.daily_flow_usd ?? 0), 0);
-    const flow_pct = latest?.aum_usd ? (flow_1y / latest.aum_usd) * 100 : 0;
+    // Only compute flow if we actually have non-null flow snapshots in the window
+    const flowSnapshots = history.filter(
+      (s) => s.snapshot_date >= cutoff_1y && s.daily_flow_usd != null,
+    );
+    const flow_1y: number | null = flowSnapshots.length > 0
+      ? flowSnapshots.reduce((sum, s) => sum + (s.daily_flow_usd ?? 0), 0)
+      : null;
+    const flow_pct: number | null =
+      flow_1y != null && latest?.aum_usd ? (flow_1y / latest.aum_usd) * 100 : null;
 
     // Find a price ~1y ago (closest snapshot to cutoff_1y) for return computation
     let price_1y_ago: number | null = null;
@@ -81,7 +86,7 @@ function aggregate(byTicker: Map<string, Snapshot[]>): TickerAgg[] {
 
     // Classify divergence — the actual signal
     let divergence: TickerAgg["divergence"] = "unknown";
-    if (price_return_1y != null) {
+    if (price_return_1y != null && flow_pct != null) {
       const priceUp = price_return_1y > 5;
       const priceDown = price_return_1y < -5;
       const flowIn = flow_pct > 2;
@@ -164,8 +169,12 @@ const DIVERGENCE_INFO: Record<TickerAgg["divergence"], { label: string; explaine
 function computeHeadlines(aggs: TickerAgg[]): string[] {
   const lines: string[] = [];
 
-  // 1) Big flow gainers (>=10% inflow)
-  const bigInflows = aggs.filter((a) => a.flow_pct >= 8).sort((a, b) => b.flow_pct - a.flow_pct);
+  // Narrow to entries that actually have a flow_pct for the calculations below
+  type WithFlow = TickerAgg & { flow_pct: number };
+  const withFlow: WithFlow[] = aggs.filter((a): a is WithFlow => a.flow_pct != null);
+
+  // 1) Big flow gainers (>=8% inflow)
+  const bigInflows = withFlow.filter((a) => a.flow_pct >= 8).sort((a, b) => b.flow_pct - a.flow_pct);
   if (bigInflows.length > 0) {
     const top = bigInflows[0];
     lines.push(
@@ -174,7 +183,7 @@ function computeHeadlines(aggs: TickerAgg[]): string[] {
   }
 
   // 2) Biggest outflows
-  const bigOutflows = aggs.filter((a) => a.flow_pct <= -8).sort((a, b) => a.flow_pct - b.flow_pct);
+  const bigOutflows = withFlow.filter((a) => a.flow_pct <= -8).sort((a, b) => a.flow_pct - b.flow_pct);
   if (bigOutflows.length > 0) {
     const top = bigOutflows[0];
     lines.push(
@@ -183,9 +192,9 @@ function computeHeadlines(aggs: TickerAgg[]): string[] {
   }
 
   // 3) Distribution pattern (stocks up but flow out) — most useful signal
-  const distribution = aggs
+  const distribution = withFlow
     .filter((a) => a.divergence === "money_leaving_winner")
-    .sort((a, b) => (a.price_return_1y ?? 0) - (b.flow_pct - a.flow_pct));
+    .sort((a, b) => a.flow_pct - b.flow_pct);
   if (distribution.length > 0) {
     const top = distribution[0];
     lines.push(
@@ -194,7 +203,7 @@ function computeHeadlines(aggs: TickerAgg[]): string[] {
   }
 
   // 4) Accumulation pattern (stocks down but flow in)
-  const accumulation = aggs
+  const accumulation = withFlow
     .filter((a) => a.divergence === "money_buying_dip")
     .sort((a, b) => b.flow_pct - a.flow_pct);
   if (accumulation.length > 0) {
@@ -205,8 +214,8 @@ function computeHeadlines(aggs: TickerAgg[]): string[] {
   }
 
   // 5) Duration shift in bonds
-  const ief = aggs.find((a) => a.meta.ticker === "IEF");
-  const tlt = aggs.find((a) => a.meta.ticker === "TLT");
+  const ief = withFlow.find((a) => a.meta.ticker === "IEF");
+  const tlt = withFlow.find((a) => a.meta.ticker === "TLT");
   if (ief && tlt && ief.flow_pct > 5 && tlt.flow_pct < -5) {
     lines.push(
       `Bond curve: money rotating INTO 7-10y Treasuries (IEF +${ief.flow_pct.toFixed(1)}%) and OUT of 20y+ (TLT ${tlt.flow_pct.toFixed(1)}%) — duration shortening.`,
@@ -270,31 +279,48 @@ export default async function FlowsPage() {
       {/* CROSS-ASSET */}
       <section>
         <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-400 mb-3">
-          Cross-asset — where the money lives
+          Cross-asset — where the money is moving (last 12 months)
         </h2>
-        <div className="flex flex-wrap gap-3 items-end mb-3">
-          {crossAsset.sort((a, b) => (b.latest_aum ?? 0) - (a.latest_aum ?? 0)).map((a) => {
-            const { w, h } = bubbleSize(a.latest_aum, maxCrossAssetAum);
-            const flowColor = flowColorClass(a.flow_pct);
-            return (
-              <div
-                key={a.meta.ticker}
-                className={`rounded-lg border border-neutral-700 p-3 flex flex-col justify-center items-center text-center ${flowColor}`}
-                style={{ width: `${w}px`, height: `${h}px` }}
-                title={`${a.meta.long_name}\nAUM ${fmtUsd(a.latest_aum)}\nFlow 1y ${fmtFlow(a.flow_1y)} (${fmtPct(a.flow_pct)})\nPrice 1y ${fmtPct(a.price_return_1y)}`}
-              >
-                <div className="text-xs font-mono opacity-70 text-neutral-300">{a.meta.ticker}</div>
-                <div className="text-xs font-medium truncate w-full text-neutral-200">{a.meta.label}</div>
-                <div className="text-sm font-semibold tabular-nums mt-1 text-neutral-100">{fmtUsd(a.latest_aum)}</div>
-                <div className="text-[10px] tabular-nums mt-1 text-neutral-300">
-                  flow {fmtPct(a.flow_pct)} · price {fmtPct(a.price_return_1y)}
-                </div>
-              </div>
-            );
-          })}
+        <div className="rounded-md border border-neutral-800">
+          <table className="w-full text-sm">
+            <thead className="bg-neutral-900 text-left text-xs uppercase tracking-wider text-neutral-400">
+              <tr>
+                <th className="px-3 py-2 font-medium">Asset class</th>
+                <th className="px-3 py-2 font-medium">Pattern</th>
+                <th className="px-3 py-2 font-medium text-right">Stock price 1y</th>
+                <th className="px-3 py-2 font-medium text-right">Fund flow 1y</th>
+                <th className="px-3 py-2 font-medium text-right">AUM</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-neutral-800">
+              {crossAsset
+                .sort((a, b) => (b.flow_pct ?? -999) - (a.flow_pct ?? -999))
+                .map((a) => {
+                  const div = DIVERGENCE_INFO[a.divergence];
+                  return (
+                    <tr key={a.meta.ticker} className="hover:bg-neutral-900/50">
+                      <td className="px-3 py-2">
+                        <div className="text-neutral-100">{a.meta.label}</div>
+                        <div className="text-xs text-neutral-500 font-mono">{a.meta.ticker}</div>
+                      </td>
+                      <td className={`px-3 py-2 text-xs ${div.color}`} title={div.explainer}>
+                        {div.label}
+                      </td>
+                      <td className={`px-3 py-2 text-right tabular-nums ${(a.price_return_1y ?? 0) >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                        {fmtPct(a.price_return_1y)}
+                      </td>
+                      <td className={`px-3 py-2 text-right tabular-nums ${a.flow_pct == null ? "text-neutral-500" : a.flow_pct >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                        {fmtPct(a.flow_pct)}
+                      </td>
+                      <td className="px-3 py-2 text-right text-neutral-400 tabular-nums">{fmtUsd(a.latest_aum)}</td>
+                    </tr>
+                  );
+                })}
+            </tbody>
+          </table>
         </div>
-        <p className="text-xs text-neutral-500">
-          Bubble size = current AUM. Color = 1-year net flow as % of AUM. Each tile shows both flow and price returns so you can spot divergence at a glance.
+        <p className="mt-2 text-xs text-neutral-500">
+          Sorted by fund-flow direction. Watch for <span className="text-amber-300">Distribution ⚠</span> (stocks up but money leaving) and <span className="text-sky-300">Accumulation ⚠</span> (stocks down but money flowing in) — those are the actionable patterns.
         </p>
       </section>
 
@@ -317,7 +343,7 @@ export default async function FlowsPage() {
             </thead>
             <tbody className="divide-y divide-neutral-800">
               {sectors
-                .sort((a, b) => b.flow_pct - a.flow_pct)
+                .sort((a, b) => (b.flow_pct ?? -999) - (a.flow_pct ?? -999))
                 .map((a) => {
                   const div = DIVERGENCE_INFO[a.divergence];
                   return (
@@ -330,10 +356,10 @@ export default async function FlowsPage() {
                       <td className={`px-3 py-2 text-right tabular-nums ${(a.price_return_1y ?? 0) >= 0 ? "text-emerald-400" : "text-red-400"}`}>
                         {fmtPct(a.price_return_1y)}
                       </td>
-                      <td className={`px-3 py-2 text-right tabular-nums ${a.flow_1y >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                      <td className={`px-3 py-2 text-right tabular-nums ${a.flow_1y == null ? "text-neutral-500" : a.flow_1y >= 0 ? "text-emerald-400" : "text-red-400"}`}>
                         {fmtFlow(a.flow_1y)}
                       </td>
-                      <td className={`px-3 py-2 text-right tabular-nums ${a.flow_pct >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                      <td className={`px-3 py-2 text-right tabular-nums ${a.flow_pct == null ? "text-neutral-500" : a.flow_pct >= 0 ? "text-emerald-400" : "text-red-400"}`}>
                         {fmtPct(a.flow_pct)}
                       </td>
                       <td className={`px-3 py-2 text-xs ${div.color}`} title={div.explainer}>
@@ -370,7 +396,7 @@ export default async function FlowsPage() {
             </thead>
             <tbody className="divide-y divide-neutral-800">
               {themes
-                .sort((a, b) => b.flow_pct - a.flow_pct)
+                .sort((a, b) => (b.flow_pct ?? -999) - (a.flow_pct ?? -999))
                 .map((a) => {
                   const div = DIVERGENCE_INFO[a.divergence];
                   return (
@@ -384,10 +410,10 @@ export default async function FlowsPage() {
                       <td className={`px-3 py-2 text-right tabular-nums ${(a.price_return_1y ?? 0) >= 0 ? "text-emerald-400" : "text-red-400"}`}>
                         {fmtPct(a.price_return_1y)}
                       </td>
-                      <td className={`px-3 py-2 text-right tabular-nums ${a.flow_1y >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                      <td className={`px-3 py-2 text-right tabular-nums ${a.flow_1y == null ? "text-neutral-500" : a.flow_1y >= 0 ? "text-emerald-400" : "text-red-400"}`}>
                         {fmtFlow(a.flow_1y)}
                       </td>
-                      <td className={`px-3 py-2 text-right tabular-nums ${a.flow_pct >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                      <td className={`px-3 py-2 text-right tabular-nums ${a.flow_pct == null ? "text-neutral-500" : a.flow_pct >= 0 ? "text-emerald-400" : "text-red-400"}`}>
                         {fmtPct(a.flow_pct)}
                       </td>
                       <td className={`px-3 py-2 text-xs ${div.color}`} title={div.explainer}>
