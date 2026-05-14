@@ -1,0 +1,89 @@
+name: Daily ETF flow ingest
+
+# Runs in GitHub-hosted runners (cloud) so it works regardless of whether
+# the user's laptop is on. Free tier limits (2000 min/month for private repos)
+# easily cover the ~3-min daily run = ~66 min/month.
+
+on:
+  schedule:
+    # 22:00 UTC weekdays = 6 PM ET (winter) / 5 PM ET (summer).
+    # After US market close in all DST scenarios.
+    - cron: '0 22 * * 1-5'
+  workflow_dispatch:    # allows manual trigger from the Actions tab
+
+# Prevent overlapping runs (e.g. if a previous run is still going)
+concurrency:
+  group: daily-ingest
+  cancel-in-progress: false
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Capture Yahoo daily AUM
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          EDGAR_USER_AGENT: ${{ secrets.EDGAR_USER_AGENT }}
+        run: python -m ingest.etf_aum_yahoo
+
+      - name: Refresh iShares daily
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          EDGAR_USER_AGENT: ${{ secrets.EDGAR_USER_AGENT }}
+        # Keep window tight on daily runs — only need last few days
+        run: python -m ingest.etf_shares_ishares --days 7
+
+      - name: Refresh public N-PORT XML (Mondays only)
+        if: ${{ github.event.schedule == '0 22 * * 1' || github.event_name == 'workflow_dispatch' }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          EDGAR_USER_AGENT: ${{ secrets.EDGAR_USER_AGENT }}
+        # Weekly refresh — catches new filings as they hit EDGAR
+        run: python -m ingest.etf_flows --years 1
+        continue-on-error: true  # don't fail the whole workflow if SEC is slow
+
+      - name: Rebuild etf_metrics
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          EDGAR_USER_AGENT: ${{ secrets.EDGAR_USER_AGENT }}
+        run: python -m ingest.etf_metrics
+
+  # Separate manual job for DERA quarterly refresh — runs only when triggered
+  # (the DERA dataset publishes ~4x/year, so cron is wasteful).
+  dera-refresh:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Refresh DERA monthly (latest quarter only)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          EDGAR_USER_AGENT: ${{ secrets.EDGAR_USER_AGENT }}
+        run: python -m ingest.etf_flows_monthly --years 0.5

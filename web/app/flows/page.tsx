@@ -1,431 +1,696 @@
+import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase";
 import { ETF_UNIVERSE, type EtfMeta } from "@/lib/etfs";
+import { runStalenessChecks } from "@/lib/staleness";
 
-// /flows — top-down view, ETF AUM + flow + price together.
-// The key insight: FLOW and PRICE are different. Money can leave a fund
-// while stocks go up (distribution) or money can pile in as stocks drop
-// (accumulation). The divergence between the two is often the signal.
+// /flows — sector / theme rotation dashboard.
+//
+// Reads from etf_metrics (refreshed daily by ingest/etf_metrics.py).
+// Flow source: etf_flows_monthly — true monthly creation/redemption from
+// SEC DERA's N-PORT bulk dataset, ~3-4 month publish lag.
+//
+// UI principles (per CLAUDE.md §2):
+//  - No advice. Every row reads as "what happened", not "what to do".
+//  - Show numbers next to plain-English reading.
+//  - Multi-select timeframe pills via URL searchParams (server-rendered).
 
-type Snapshot = {
+type Tf = "1m" | "3m" | "6m" | "1y";
+const ALL_TFS: Tf[] = ["1m", "3m", "6m", "1y"];
+const DEFAULT_TFS: Tf[] = ["1m", "3m"];
+
+type Metric = {
   ticker: string;
-  snapshot_date: string;
   aum_usd: number | null;
-  daily_flow_usd: number | null;  // quarterly net flow in practice
-  price: number | null;
-};
-
-type TickerAgg = {
-  meta: EtfMeta;
-  latest_aum: number | null;
-  latest_date: string | null;
-  latest_price: number | null;
-  flow_1y: number | null;       // null if no flow data
-  flow_pct: number | null;      // null if no AUM/no flow data
+  price_return_1m: number | null;
+  price_return_3m: number | null;
+  price_return_6m: number | null;
   price_return_1y: number | null;
-  divergence: "money_chasing_price" | "money_leaving_winner" | "money_buying_dip" | "money_fleeing_loser" | "aligned" | "unknown";
-  history: Snapshot[];
+  flow_pct_1m: number | null;
+  flow_pct_3m: number | null;
+  flow_pct_6m: number | null;
+  flow_pct_1y: number | null;
+  flow_data_as_of: string | null;
+  flow_1m_as_of: string | null;
 };
 
-async function fetchAllFlows(): Promise<Map<string, Snapshot[]>> {
-  const sb = supabaseServer();
-  const out = new Map<string, Snapshot[]>();
-  let from = 0;
-  while (true) {
-    const { data, error } = await sb
-      .from("etf_flows")
-      .select("ticker,snapshot_date,aum_usd,daily_flow_usd,price")
-      .order("snapshot_date", { ascending: true })
-      .range(from, from + 999);
-    if (error) throw error;
-    if (!data || data.length === 0) break;
-    for (const r of data as Snapshot[]) {
-      if (!out.has(r.ticker)) out.set(r.ticker, []);
-      out.get(r.ticker)!.push(r);
-    }
-    if (data.length < 1000) break;
-    from += 1000;
-  }
-  return out;
+type Row = Metric & {
+  meta: EtfMeta;
+  theme_group: ThemeGroup;
+  source_kind: SourceKind; // freshness tier
+};
+
+type SourceKind = "live" | "nport_quarterly" | "nport_dera" | "none";
+
+function classifySource(m: Metric): SourceKind {
+  if (!m.flow_data_as_of) return "none";
+  const d = m.flow_data_as_of;
+  const today = new Date();
+  const asOf = new Date(d + "T00:00:00");
+  const lagDays = Math.floor((today.getTime() - asOf.getTime()) / 86400000);
+  if (lagDays <= 7) return "live";              // issuer-direct daily
+  if (lagDays <= 90) return "nport_quarterly";  // public N-PORT filing
+  return "nport_dera";                          // DERA bulk dataset
 }
 
-function aggregate(byTicker: Map<string, Snapshot[]>): TickerAgg[] {
-  const cutoff_1y = new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10);
-  const out: TickerAgg[] = [];
-  for (const meta of ETF_UNIVERSE) {
-    const history = byTicker.get(meta.ticker) ?? [];
-    const latest = history[history.length - 1];
-    // Only compute flow if we actually have non-null flow snapshots in the window
-    const flowSnapshots = history.filter(
-      (s) => s.snapshot_date >= cutoff_1y && s.daily_flow_usd != null,
-    );
-    const flow_1y: number | null = flowSnapshots.length > 0
-      ? flowSnapshots.reduce((sum, s) => sum + (s.daily_flow_usd ?? 0), 0)
-      : null;
-    const flow_pct: number | null =
-      flow_1y != null && latest?.aum_usd ? (flow_1y / latest.aum_usd) * 100 : null;
+const SOURCE_BADGE: Record<SourceKind, { label: string; color: string; explain: string }> = {
+  live:            { label: "live",  color: "text-emerald-300 bg-emerald-900/30 border-emerald-700/40", explain: "Daily flow from issuer shares-outstanding × NAV. Fresh to yesterday." },
+  nport_quarterly: { label: "~2-3mo", color: "text-amber-300 bg-amber-900/20 border-amber-700/40",       explain: "Back-solved from individual public N-PORT filing (with dividend correction)." },
+  nport_dera:      { label: "~4-5mo", color: "text-neutral-400 bg-neutral-900/40 border-neutral-700/40", explain: "SEC DERA bulk N-PORT dataset. Best data we have but most-stale." },
+  none:            { label: "no data", color: "text-neutral-500 bg-neutral-900/40 border-neutral-800",   explain: "Doesn't file N-PORT (commodity/crypto trust without issuer feed)." },
+};
 
-    // Find a price ~1y ago (closest snapshot to cutoff_1y) for return computation
-    let price_1y_ago: number | null = null;
-    for (const s of history) {
-      if (s.snapshot_date <= cutoff_1y && s.price != null) {
-        price_1y_ago = s.price;
-      } else if (s.snapshot_date > cutoff_1y) {
-        break;
-      }
-    }
-    // If no snapshot before cutoff, use oldest available
-    if (price_1y_ago == null && history.length >= 2) {
-      const oldest = history.find((s) => s.price != null);
-      price_1y_ago = oldest?.price ?? null;
-    }
-    const latest_price = latest?.price ?? null;
-    const price_return_1y =
-      latest_price != null && price_1y_ago != null && price_1y_ago > 0
-        ? ((latest_price - price_1y_ago) / price_1y_ago) * 100
-        : null;
+// ───────────────────────────────────────────────────────────────────────
+// Macro theme groupings — cross-cuts category. One group per ticker.
+// ───────────────────────────────────────────────────────────────────────
+type ThemeGroup = "defensive" | "cyclical" | "growth_long_duration" | "rate_sensitive" | "broad";
 
-    // Classify divergence — the actual signal
-    let divergence: TickerAgg["divergence"] = "unknown";
-    if (price_return_1y != null && flow_pct != null) {
-      const priceUp = price_return_1y > 5;
-      const priceDown = price_return_1y < -5;
-      const flowIn = flow_pct > 2;
-      const flowOut = flow_pct < -2;
-      if (priceUp && flowIn) divergence = "money_chasing_price";  // both up
-      else if (priceUp && flowOut) divergence = "money_leaving_winner";  // distribution
-      else if (priceDown && flowIn) divergence = "money_buying_dip";  // accumulation
-      else if (priceDown && flowOut) divergence = "money_fleeing_loser";  // both down
-      else divergence = "aligned";
-    }
+const THEME_GROUP: Record<string, ThemeGroup> = {
+  XLP: "defensive", XLU: "defensive", XLV: "defensive", XLRE: "defensive", GLD: "defensive",
+  XLF: "cyclical", XLI: "cyclical", XLB: "cyclical", XLE: "cyclical", XLY: "cyclical",
+  KRE: "cyclical", EEM: "cyclical", EFA: "cyclical", GDX: "cyclical", ITA: "cyclical", XAR: "cyclical",
+  XLK: "growth_long_duration", XLC: "growth_long_duration", QQQ: "growth_long_duration",
+  IGV: "growth_long_duration", SOXX: "growth_long_duration", SMH: "growth_long_duration",
+  BOTZ: "growth_long_duration", IBB: "growth_long_duration", XBI: "growth_long_duration",
+  ESPO: "growth_long_duration", ICLN: "growth_long_duration", TAN: "growth_long_duration",
+  KWEB: "growth_long_duration", URA: "growth_long_duration", IBIT: "growth_long_duration",
+  IEF: "rate_sensitive", TLT: "rate_sensitive",
+  SPY: "broad",
+};
 
-    out.push({
-      meta,
-      latest_aum: latest?.aum_usd ?? null,
-      latest_date: latest?.snapshot_date ?? null,
-      latest_price,
-      flow_1y,
-      flow_pct,
-      price_return_1y,
-      divergence,
-      history,
-    });
-  }
-  return out;
-}
+const THEME_LABEL: Record<ThemeGroup, string> = {
+  defensive: "Defensive",
+  cyclical: "Cyclical",
+  growth_long_duration: "Growth / long-duration",
+  rate_sensitive: "Rate-sensitive (bonds)",
+  broad: "Broad market",
+};
 
-function fmtUsd(n: number | null): string {
-  if (n == null) return "—";
-  const abs = Math.abs(n);
-  if (abs >= 1e12) return `${n < 0 ? "-" : ""}$${(abs / 1e12).toFixed(2)}T`;
-  if (abs >= 1e9) return `${n < 0 ? "-" : ""}$${(abs / 1e9).toFixed(1)}B`;
-  if (abs >= 1e6) return `${n < 0 ? "-" : ""}$${(abs / 1e6).toFixed(0)}M`;
-  return `${n < 0 ? "-" : ""}$${abs.toFixed(0)}`;
-}
-
-function fmtFlow(n: number | null): string {
-  if (n == null || n === 0) return "—";
-  return (n > 0 ? "+" : "") + fmtUsd(n);
-}
-
+// ───────────────────────────────────────────────────────────────────────
+// Formatters
+// ───────────────────────────────────────────────────────────────────────
 function fmtPct(n: number | null, digits = 1): string {
   if (n == null) return "—";
   return `${n >= 0 ? "+" : ""}${n.toFixed(digits)}%`;
 }
-
-const DIVERGENCE_INFO: Record<TickerAgg["divergence"], { label: string; explainer: string; color: string }> = {
-  money_chasing_price: {
-    label: "Both up",
-    explainer: "Stocks up AND money flowing in — momentum / late stage",
-    color: "text-emerald-300",
-  },
-  money_leaving_winner: {
-    label: "Distribution ⚠",
-    explainer: "Stocks up BUT money leaving — profit-taking, sometimes a top",
-    color: "text-amber-300",
-  },
-  money_buying_dip: {
-    label: "Accumulation ⚠",
-    explainer: "Stocks down BUT money flowing in — buying the dip, sometimes a bottom",
-    color: "text-sky-300",
-  },
-  money_fleeing_loser: {
-    label: "Both down",
-    explainer: "Stocks down AND money leaving — capitulation",
-    color: "text-red-300",
-  },
-  aligned: {
-    label: "Mild",
-    explainer: "Movement is small in both flow and price",
-    color: "text-neutral-400",
-  },
-  unknown: {
-    label: "—",
-    explainer: "Not enough data",
-    color: "text-neutral-500",
-  },
-};
-
-// Compute headlines — the 3-5 most signal-bearing observations
-function computeHeadlines(aggs: TickerAgg[]): string[] {
-  const lines: string[] = [];
-
-  // Narrow to entries that actually have a flow_pct for the calculations below
-  type WithFlow = TickerAgg & { flow_pct: number };
-  const withFlow: WithFlow[] = aggs.filter((a): a is WithFlow => a.flow_pct != null);
-
-  // 1) Big flow gainers (>=8% inflow)
-  const bigInflows = withFlow.filter((a) => a.flow_pct >= 8).sort((a, b) => b.flow_pct - a.flow_pct);
-  if (bigInflows.length > 0) {
-    const top = bigInflows[0];
-    lines.push(
-      `Biggest inflow: ${top.meta.label} (${top.meta.ticker}) +${top.flow_pct.toFixed(1)}% of fund size — passive money is rotating in.`,
-    );
-  }
-
-  // 2) Biggest outflows
-  const bigOutflows = withFlow.filter((a) => a.flow_pct <= -8).sort((a, b) => a.flow_pct - b.flow_pct);
-  if (bigOutflows.length > 0) {
-    const top = bigOutflows[0];
-    lines.push(
-      `Biggest outflow: ${top.meta.label} (${top.meta.ticker}) ${top.flow_pct.toFixed(1)}% of fund size — money exiting.`,
-    );
-  }
-
-  // 3) Distribution pattern (stocks up but flow out) — most useful signal
-  const distribution = withFlow
-    .filter((a) => a.divergence === "money_leaving_winner")
-    .sort((a, b) => a.flow_pct - b.flow_pct);
-  if (distribution.length > 0) {
-    const top = distribution[0];
-    lines.push(
-      `Distribution watch: ${top.meta.label} stocks ${fmtPct(top.price_return_1y)} but ETF flow ${top.flow_pct.toFixed(1)}% — money taking profits despite price strength.`,
-    );
-  }
-
-  // 4) Accumulation pattern (stocks down but flow in)
-  const accumulation = withFlow
-    .filter((a) => a.divergence === "money_buying_dip")
-    .sort((a, b) => b.flow_pct - a.flow_pct);
-  if (accumulation.length > 0) {
-    const top = accumulation[0];
-    lines.push(
-      `Accumulation watch: ${top.meta.label} stocks ${fmtPct(top.price_return_1y)} but ETF flow +${top.flow_pct.toFixed(1)}% — buying the dip.`,
-    );
-  }
-
-  // 5) Duration shift in bonds
-  const ief = withFlow.find((a) => a.meta.ticker === "IEF");
-  const tlt = withFlow.find((a) => a.meta.ticker === "TLT");
-  if (ief && tlt && ief.flow_pct > 5 && tlt.flow_pct < -5) {
-    lines.push(
-      `Bond curve: money rotating INTO 7-10y Treasuries (IEF +${ief.flow_pct.toFixed(1)}%) and OUT of 20y+ (TLT ${tlt.flow_pct.toFixed(1)}%) — duration shortening.`,
-    );
-  }
-
-  return lines;
+function fmtPriceRet(n: number | null): string {
+  if (n == null) return "—";
+  return fmtPct(n * 100);
+}
+function fmtFlow(n: number | null): string {
+  return fmtPct(n);
+}
+function pctColor(n: number | null): string {
+  if (n == null) return "text-neutral-500";
+  if (n > 0) return "text-emerald-400";
+  if (n < 0) return "text-red-400";
+  return "text-neutral-400";
+}
+function fmtDate(d: string | null): string {
+  if (!d) return "—";
+  return new Date(d + "T00:00:00").toLocaleDateString("en-US", { month: "short", year: "numeric" });
 }
 
-function bubbleSize(aum: number | null, max: number): { w: number; h: number } {
-  if (!aum || max <= 0) return { w: 80, h: 80 };
-  const norm = Math.sqrt(aum / max);
-  const px = Math.max(80, Math.min(220, 220 * norm));
-  return { w: px, h: px };
+const TF_LABEL: Record<Tf, string> = { "1m": "1M", "3m": "3M", "6m": "6M", "1y": "1Y" };
+function priceFor(r: Row, tf: Tf): number | null {
+  return r[`price_return_${tf}` as const];
+}
+function flowFor(r: Row, tf: Tf): number | null {
+  return r[`flow_pct_${tf}` as const];
 }
 
-function flowColorClass(pct: number): string {
-  if (pct >= 10) return "bg-emerald-900/60";
-  if (pct >= 3) return "bg-emerald-900/30";
-  if (pct >= 1) return "bg-emerald-950/40";
-  if (pct <= -10) return "bg-red-900/60";
-  if (pct <= -3) return "bg-red-900/30";
-  if (pct <= -1) return "bg-red-950/40";
-  return "bg-neutral-900";
+// ───────────────────────────────────────────────────────────────────────
+// "So what" reading — one sentence per row. Observational, not advisory.
+// ───────────────────────────────────────────────────────────────────────
+function reading(r: Row, selected: Tf[]): string {
+  const name = r.meta.label;
+  const p1m = r.price_return_1m;
+  const p3m = r.price_return_3m;
+  const p6m = r.price_return_6m;
+  const p1y = r.price_return_1y;
+  const f1m = r.flow_pct_1m;
+  const f3m = r.flow_pct_3m;
+  const f6m = r.flow_pct_6m;
+  const f1y = r.flow_pct_1y;
+
+  // Pick the "primary" timeframe = shortest selected with both price + flow
+  const orderedSelected: Tf[] = (["1m", "3m", "6m", "1y"] as Tf[]).filter((t) => selected.includes(t));
+  const primary = orderedSelected.find((t) => priceFor(r, t) != null && flowFor(r, t) != null) ?? "3m";
+
+  const p = priceFor(r, primary);
+  const f = flowFor(r, primary);
+
+  if (p == null && f == null) return `${name} — no data.`;
+
+  // Special pattern: flow direction flipped recently
+  if (f1m != null && f6m != null) {
+    if (f1m > 1 && f6m < -1) {
+      return `${name} — money has rotated IN over the last month (${fmtFlow(f1m)}) after pulling out over 6M (${fmtFlow(f6m)}). Direction has flipped.`;
+    }
+    if (f1m < -1 && f6m > 1) {
+      return `${name} — money has rotated OUT over the last month (${fmtFlow(f1m)}) after flowing in over 6M (${fmtFlow(f6m)}). Direction has flipped.`;
+    }
+  }
+
+  // Crowded warning — very strong price + heavy fresh inflow
+  if (p6m != null && p3m != null && f1m != null && p6m > 0.20 && p3m > 0.10 && f1m > 3) {
+    return `${name} — price ${fmtPriceRet(p6m)} over 6M and ${fmtPriceRet(p3m)} over 3M with ${fmtFlow(f1m)} fresh inflow. Late-cycle: reward asymmetric to risk.`;
+  }
+
+  // Confirmed leader — positive price + positive flow at primary TF + supportive 1Y
+  if (p != null && f != null && p > 0.02 && f > 1 && (p1y ?? 0) > 0.05) {
+    return `${name} — price ${fmtPriceRet(p)} and money continuing to flow in (${fmtFlow(f)}) over ${TF_LABEL[primary]}. Trend intact across multiple timeframes.`;
+  }
+
+  // Distribution — price up but flow leaving
+  if (p != null && f != null && p > 0.02 && f < -1) {
+    return `${name} — price ${fmtPriceRet(p)} over ${TF_LABEL[primary]} but ${fmtFlow(f)} flow out. Money taking profits while price holds.`;
+  }
+
+  // Accumulation — price down but flow in
+  if (p != null && f != null && p < -0.02 && f > 1) {
+    return `${name} — price ${fmtPriceRet(p)} over ${TF_LABEL[primary]} but ${fmtFlow(f)} flow in. Buyers active on the weakness.`;
+  }
+
+  // Capitulation — both down
+  if (p != null && f != null && p < -0.02 && f < -1) {
+    return `${name} — price ${fmtPriceRet(p)} and ${fmtFlow(f)} flow over ${TF_LABEL[primary]}. Both price and money leaving in the same direction.`;
+  }
+
+  // Fading: price still up but flow decelerating noticeably
+  if (p != null && f3m != null && f6m != null && p > 0.02 && f3m < f6m - 3 && f3m < 2) {
+    return `${name} — price ${fmtPriceRet(p)} over ${TF_LABEL[primary]} but flow decelerating (3M ${fmtFlow(f3m)} vs 6M ${fmtFlow(f6m)}). Trend losing fuel.`;
+  }
+
+  // Price story only (no flow data — GLD/IBIT)
+  if (f1m == null && f3m == null && f6m == null && p1y != null) {
+    return `${name} — price ${fmtPriceRet(p1y)} over 1Y. No SEC N-PORT flow data (not an N-PORT-filing fund).`;
+  }
+
+  // Mild / neutral
+  return `${name} — small moves on both sides over ${TF_LABEL[primary]} (price ${fmtPriceRet(p)}, flow ${fmtFlow(f)}). Nothing strong to read.`;
 }
 
-export default async function FlowsPage() {
-  const byTicker = await fetchAllFlows();
-  const aggs = aggregate(byTicker);
-  const headlines = computeHeadlines(aggs);
+// ───────────────────────────────────────────────────────────────────────
+// Top insight cards
+// ───────────────────────────────────────────────────────────────────────
+type InsightCard = { title: string; body: string; tone: "positive" | "warning" | "neutral" };
 
-  const crossAsset = aggs.filter((a) => a.meta.category === "cross_asset");
-  const sectors = aggs.filter((a) => a.meta.category === "us_sector");
-  const themes = aggs.filter((a) => a.meta.category === "theme");
-  const maxCrossAssetAum = Math.max(...crossAsset.map((a) => a.latest_aum ?? 0));
+function buildInsights(rows: Row[]): InsightCard[] {
+  const out: InsightCard[] = [];
+
+  // 1) Strongest fresh inflow (1M)
+  const top1m = [...rows]
+    .filter((r) => r.flow_pct_1m != null)
+    .sort((a, b) => (b.flow_pct_1m as number) - (a.flow_pct_1m as number))[0];
+  if (top1m && (top1m.flow_pct_1m as number) > 3) {
+    out.push({
+      title: "Strongest fresh inflow (1M)",
+      body: `${top1m.meta.label} (${top1m.meta.ticker}) — ${fmtFlow(top1m.flow_pct_1m)} of fund in the last month. Price: ${fmtPriceRet(top1m.price_return_1m)}.`,
+      tone: "positive",
+    });
+  }
+
+  // 2) Strongest fresh outflow (1M)
+  const bot1m = [...rows]
+    .filter((r) => r.flow_pct_1m != null)
+    .sort((a, b) => (a.flow_pct_1m as number) - (b.flow_pct_1m as number))[0];
+  if (bot1m && (bot1m.flow_pct_1m as number) < -2) {
+    out.push({
+      title: "Strongest outflow (1M)",
+      body: `${bot1m.meta.label} (${bot1m.meta.ticker}) — ${fmtFlow(bot1m.flow_pct_1m)} of fund pulled out. Price: ${fmtPriceRet(bot1m.price_return_1m)}.`,
+      tone: "warning",
+    });
+  }
+
+  // 3) Biggest flow flip — sign change between 6M and 1M
+  const flippedIn = rows
+    .filter((r) => r.flow_pct_1m != null && r.flow_pct_6m != null && (r.flow_pct_1m as number) > 1 && (r.flow_pct_6m as number) < -1)
+    .sort((a, b) => (a.flow_pct_6m as number) - (b.flow_pct_6m as number))[0];
+  if (flippedIn) {
+    out.push({
+      title: "Flow direction flipped IN",
+      body: `${flippedIn.meta.label} (${flippedIn.meta.ticker}) — was bleeding ${fmtFlow(flippedIn.flow_pct_6m)} over 6M, now ${fmtFlow(flippedIn.flow_pct_1m)} in last month.`,
+      tone: "positive",
+    });
+  }
+
+  const flippedOut = rows
+    .filter((r) => r.flow_pct_1m != null && r.flow_pct_6m != null && (r.flow_pct_1m as number) < -1 && (r.flow_pct_6m as number) > 1)
+    .sort((a, b) => (b.flow_pct_6m as number) - (a.flow_pct_6m as number))[0];
+  if (flippedOut) {
+    out.push({
+      title: "Flow direction flipped OUT",
+      body: `${flippedOut.meta.label} (${flippedOut.meta.ticker}) — was attracting ${fmtFlow(flippedOut.flow_pct_6m)} over 6M, now ${fmtFlow(flippedOut.flow_pct_1m)} in last month.`,
+      tone: "warning",
+    });
+  }
+
+  // 4) Distribution — strongest price-up + flow-out divergence at 1M
+  const dist = rows
+    .filter((r) => r.price_return_1m != null && r.flow_pct_1m != null && (r.price_return_1m as number) > 0.03 && (r.flow_pct_1m as number) < -1)
+    .sort((a, b) => (a.flow_pct_1m as number) - (b.flow_pct_1m as number))[0];
+  if (dist) {
+    out.push({
+      title: "Distribution (price up, money leaving)",
+      body: `${dist.meta.label} (${dist.meta.ticker}) — price ${fmtPriceRet(dist.price_return_1m)} but ${fmtFlow(dist.flow_pct_1m)} flow out over 1M.`,
+      tone: "warning",
+    });
+  }
+
+  // 5) Accumulation — price down + flow in
+  const acc = rows
+    .filter((r) => r.price_return_1m != null && r.flow_pct_1m != null && (r.price_return_1m as number) < -0.03 && (r.flow_pct_1m as number) > 1)
+    .sort((a, b) => (b.flow_pct_1m as number) - (a.flow_pct_1m as number))[0];
+  if (acc) {
+    out.push({
+      title: "Accumulation (price down, money in)",
+      body: `${acc.meta.label} (${acc.meta.ticker}) — price ${fmtPriceRet(acc.price_return_1m)} but ${fmtFlow(acc.flow_pct_1m)} flow in over 1M.`,
+      tone: "positive",
+    });
+  }
+
+  return out;
+}
+
+// ───────────────────────────────────────────────────────────────────────
+// Sector rotation matrix (3M view)
+// ───────────────────────────────────────────────────────────────────────
+function RotationMatrix({ rows }: { rows: Row[] }) {
+  const points = rows
+    .filter((r) => r.price_return_3m != null && r.flow_pct_3m != null)
+    .map((r) => ({
+      ticker: r.meta.ticker,
+      x: (r.price_return_3m as number) * 100,
+      y: r.flow_pct_3m as number,
+    }));
+
+  if (points.length === 0) {
+    return (
+      <div className="rounded-md border border-neutral-800 p-6 text-sm text-neutral-500">
+        No 3M flow data available.
+      </div>
+    );
+  }
+
+  const maxX = Math.max(15, ...points.map((p) => Math.abs(p.x)));
+  const maxY = Math.max(15, ...points.map((p) => Math.abs(p.y)));
+  const W = 700, H = 460, PAD = 56;
+  const sx = (x: number) => PAD + ((x + maxX) / (2 * maxX)) * (W - 2 * PAD);
+  const sy = (y: number) => H - PAD - ((y + maxY) / (2 * maxY)) * (H - 2 * PAD);
+
+  return (
+    <div className="rounded-md border border-neutral-800 p-4">
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto">
+        <rect x={sx(0)} y={PAD} width={W - PAD - sx(0)} height={sy(0) - PAD} fill="rgb(6 78 59 / 0.20)" />
+        <rect x={PAD} y={PAD} width={sx(0) - PAD} height={sy(0) - PAD} fill="rgb(2 132 199 / 0.18)" />
+        <rect x={sx(0)} y={sy(0)} width={W - PAD - sx(0)} height={H - PAD - sy(0)} fill="rgb(180 83 9 / 0.18)" />
+        <rect x={PAD} y={sy(0)} width={sx(0) - PAD} height={H - PAD - sy(0)} fill="rgb(127 29 29 / 0.18)" />
+        <line x1={PAD} y1={sy(0)} x2={W - PAD} y2={sy(0)} stroke="rgb(82 82 82)" strokeWidth={1} />
+        <line x1={sx(0)} y1={PAD} x2={sx(0)} y2={H - PAD} stroke="rgb(82 82 82)" strokeWidth={1} />
+        <text x={W - PAD - 8} y={PAD + 14} textAnchor="end" className="fill-emerald-300/80" fontSize="11">Leaders (price ↑ flow ↑)</text>
+        <text x={PAD + 8} y={PAD + 14} className="fill-sky-300/80" fontSize="11">Accumulation (price ↓ flow ↑)</text>
+        <text x={W - PAD - 8} y={H - PAD - 6} textAnchor="end" className="fill-amber-300/80" fontSize="11">Distribution (price ↑ flow ↓)</text>
+        <text x={PAD + 8} y={H - PAD - 6} className="fill-red-300/80" fontSize="11">Avoid (price ↓ flow ↓)</text>
+        <text x={W / 2} y={H - 14} textAnchor="middle" className="fill-neutral-400" fontSize="11">3-month price return</text>
+        <text x={14} y={H / 2} textAnchor="middle" transform={`rotate(-90 14 ${H / 2})`} className="fill-neutral-400" fontSize="11">3-month flow % of AUM</text>
+        <text x={PAD - 4} y={sy(0) + 4} textAnchor="end" className="fill-neutral-500" fontSize="10">{(-maxX).toFixed(0)}%</text>
+        <text x={W - PAD + 4} y={sy(0) + 4} className="fill-neutral-500" fontSize="10">+{maxX.toFixed(0)}%</text>
+        <text x={sx(0) + 4} y={PAD - 4} className="fill-neutral-500" fontSize="10">+{maxY.toFixed(0)}%</text>
+        <text x={sx(0) + 4} y={H - PAD + 12} className="fill-neutral-500" fontSize="10">{(-maxY).toFixed(0)}%</text>
+        {points.map((p) => {
+          const fill = p.x > 0 && p.y > 0 ? "rgb(110 231 183)"
+                     : p.x > 0 && p.y < 0 ? "rgb(252 211 77)"
+                     : p.x < 0 && p.y > 0 ? "rgb(125 211 252)"
+                     :                      "rgb(248 113 113)";
+          return (
+            <g key={p.ticker}>
+              <circle cx={sx(p.x)} cy={sy(p.y)} r={5} fill={fill} fillOpacity={0.85} />
+              <text x={sx(p.x) + 7} y={sy(p.y) + 4} className="fill-neutral-200" fontSize="10">{p.ticker}</text>
+            </g>
+          );
+        })}
+      </svg>
+      <p className="mt-3 text-xs text-neutral-500">
+        Each dot is one ETF. Position = 3M price return × 3M flow %. Top-right = confirmed leaders (price up + money in); top-left = accumulation (price down + money in); bottom-right = distribution (price up + money out); bottom-left = both leaving.
+      </p>
+    </div>
+  );
+}
+
+// ───────────────────────────────────────────────────────────────────────
+// Timeframe pills — multi-select via URL searchParams
+// ───────────────────────────────────────────────────────────────────────
+function TfPills({ selected }: { selected: Tf[] }) {
+  function toggleHref(tf: Tf): string {
+    const has = selected.includes(tf);
+    let next: Tf[];
+    if (has) next = selected.filter((t) => t !== tf);
+    else next = [...selected, tf];
+    // Keep canonical order
+    next = ALL_TFS.filter((t) => next.includes(t));
+    if (next.length === 0) next = [tf]; // never leave all unselected
+    const param = next.join(",");
+    // If we'd reset to default, drop the param for a clean URL
+    if (next.length === DEFAULT_TFS.length && DEFAULT_TFS.every((t) => next.includes(t))) {
+      return "/flows";
+    }
+    return `/flows?tf=${param}`;
+  }
+
+  return (
+    <div className="flex items-center gap-2 flex-wrap">
+      <span className="text-xs uppercase tracking-wider text-neutral-500">Timeframes:</span>
+      {ALL_TFS.map((tf) => {
+        const active = selected.includes(tf);
+        return (
+          <Link
+            key={tf}
+            href={toggleHref(tf)}
+            scroll={false}
+            className={
+              "px-3 py-1 rounded-md text-xs font-medium border transition-colors " +
+              (active
+                ? "bg-emerald-900/40 border-emerald-700/60 text-emerald-200"
+                : "border-neutral-800 text-neutral-400 hover:border-neutral-700 hover:text-neutral-300")
+            }
+          >
+            {TF_LABEL[tf]}
+          </Link>
+        );
+      })}
+      <span className="ml-2 text-xs text-neutral-600">click to toggle</span>
+    </div>
+  );
+}
+
+// ───────────────────────────────────────────────────────────────────────
+// Data fetch
+// ───────────────────────────────────────────────────────────────────────
+async function fetchMetrics(): Promise<Metric[]> {
+  const sb = supabaseServer();
+  const { data, error } = await sb.from("etf_metrics").select("*");
+  if (error) throw error;
+  return (data as Metric[]) ?? [];
+}
+
+function buildRows(metrics: Metric[]): Row[] {
+  const byTicker = new Map(metrics.map((m) => [m.ticker, m]));
+  const rows: Row[] = [];
+  for (const meta of ETF_UNIVERSE) {
+    const m = byTicker.get(meta.ticker);
+    if (!m) {
+      const empty: Metric = {
+        ticker: meta.ticker, aum_usd: null,
+        price_return_1m: null, price_return_3m: null, price_return_6m: null, price_return_1y: null,
+        flow_pct_1m: null, flow_pct_3m: null, flow_pct_6m: null, flow_pct_1y: null,
+        flow_data_as_of: null, flow_1m_as_of: null,
+      };
+      rows.push({ ...empty, meta, theme_group: THEME_GROUP[meta.ticker] ?? "broad", source_kind: "none" });
+      continue;
+    }
+    rows.push({ ...m, meta, theme_group: THEME_GROUP[meta.ticker] ?? "broad", source_kind: classifySource(m) });
+  }
+  return rows;
+}
+
+function parseTfs(raw: string | string[] | undefined): Tf[] {
+  if (!raw) return DEFAULT_TFS;
+  const s = Array.isArray(raw) ? raw.join(",") : raw;
+  const parts = s.split(",").map((p) => p.trim().toLowerCase()) as Tf[];
+  const valid = parts.filter((p): p is Tf => (ALL_TFS as string[]).includes(p));
+  return valid.length > 0 ? ALL_TFS.filter((t) => valid.includes(t)) : DEFAULT_TFS;
+}
+
+// ───────────────────────────────────────────────────────────────────────
+// Page
+// ───────────────────────────────────────────────────────────────────────
+export default async function FlowsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ tf?: string | string[] }>;
+}) {
+  const sp = await searchParams;
+  const selected = parseTfs(sp.tf);
+  const [metrics, staleness] = await Promise.all([fetchMetrics(), runStalenessChecks()]);
+  const rows = buildRows(metrics);
+  const insights = buildInsights(rows);
+  const stalenessIssues = staleness.filter((s) => !s.ok);
+
+  // Group by theme
+  const themeOrder: ThemeGroup[] = ["broad", "growth_long_duration", "cyclical", "defensive", "rate_sensitive"];
+  const byTheme = new Map<ThemeGroup, Row[]>();
+  for (const g of themeOrder) byTheme.set(g, []);
+  for (const r of rows) byTheme.get(r.theme_group)!.push(r);
+  for (const arr of byTheme.values()) {
+    // Sort by 1M flow desc within each group (nulls last)
+    arr.sort((a, b) => (b.flow_pct_1m ?? -Infinity) - (a.flow_pct_1m ?? -Infinity));
+  }
+
+  // Money rotating IN: 1M flow > +2% AND 1M flow > 6M flow (recent acceleration up)
+  const rotatingIn = rows
+    .filter((r) => r.flow_pct_1m != null && r.flow_pct_6m != null && (r.flow_pct_1m as number) > 2 && (r.flow_pct_1m as number) > (r.flow_pct_6m as number))
+    .sort((a, b) => (b.flow_pct_1m as number) - (a.flow_pct_1m as number))
+    .slice(0, 8);
+
+  // Money rotating OUT: 1M flow < -1.5% AND 1M flow < 6M flow
+  const rotatingOut = rows
+    .filter((r) => r.flow_pct_1m != null && r.flow_pct_6m != null && (r.flow_pct_1m as number) < -1.5 && (r.flow_pct_1m as number) < (r.flow_pct_6m as number))
+    .sort((a, b) => (a.flow_pct_1m as number) - (b.flow_pct_1m as number))
+    .slice(0, 8);
+
+  // Latest flow as-of for footer
+  const asOfDates = rows.map((r) => r.flow_data_as_of).filter((d): d is string => !!d).sort();
+  const latestAsOf = asOfDates[asOfDates.length - 1] ?? null;
+  const earliestAsOf = asOfDates[0] ?? null;
 
   return (
     <div className="max-w-7xl mx-auto space-y-10">
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight">Flows — top-down money movement</h1>
-
-        {/* HOW TO READ THIS PAGE — the critical mental model */}
-        <div className="mt-3 rounded-md border border-amber-700/50 bg-amber-950/30 p-3 text-sm">
-          <div className="font-medium text-amber-200 mb-1">⚠ Important: Flow ≠ Stock Price</div>
-          <p className="text-neutral-300 text-xs leading-relaxed">
-            This page shows <strong>fund flow</strong> (money in/out of ETFs), <em>not stock price</em>. Stocks can go UP while money LEAVES a fund (people taking profits — &ldquo;distribution&rdquo;). Or stocks can go DOWN while money flows IN (buying the dip — &ldquo;accumulation&rdquo;). The <strong>divergence</strong> between flow and price is often the signal — both columns are shown side-by-side.
+      <header className="space-y-3">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Flows — sector & theme rotation</h1>
+          <p className="text-sm text-neutral-400 mt-1">
+            Real monthly creation/redemption flow from SEC N-PORT, paired with daily price returns. Pick which timeframes to show.
           </p>
         </div>
 
-        {/* HEADLINES */}
-        {headlines.length > 0 && (
-          <div className="mt-3 rounded-md border border-neutral-800 p-3">
-            <div className="text-xs uppercase tracking-wide text-neutral-400 font-medium mb-2">What&apos;s happening — last 12 months</div>
-            <ul className="space-y-1 text-sm text-neutral-200">
-              {headlines.map((h, i) => <li key={i}>• {h}</li>)}
+        <div className="rounded-md border border-amber-700/40 bg-amber-950/20 p-3 text-xs leading-relaxed">
+          <span className="text-amber-200 font-medium">Flow ≠ price.</span>{" "}
+          <span className="text-neutral-300">A fund&apos;s price can rise while money leaves it (people taking profits) and fall while money flows in (people buying the dip). The disagreement is often the signal — that&apos;s why both columns are shown.</span>
+        </div>
+
+        <TfPills selected={selected} />
+
+        {/* STALENESS BANNER — fires loud when any ingest pipeline stops updating */}
+        {stalenessIssues.length > 0 && (
+          <div className="rounded-md border border-red-700/60 bg-red-950/30 p-3 text-xs">
+            <div className="font-medium text-red-200 mb-1.5">⚠ Ingest pipeline appears stale</div>
+            <ul className="space-y-0.5 text-neutral-200">
+              {stalenessIssues.map((s) => (
+                <li key={s.source}>
+                  <span className="font-mono text-red-300">{s.source}</span>:{" "}
+                  {s.latest
+                    ? <>latest data is <span className="font-medium">{s.latest}</span> ({s.age_days}d old, expected ≤ {s.threshold_days}d)</>
+                    : <>no data at all</>}
+                </li>
+              ))}
             </ul>
+            <p className="mt-1.5 text-neutral-400">Check <code className="text-neutral-300">/tmp/etf_ingest_YYYYMMDD.log</code> or run <code className="text-neutral-300">scripts/daily_ingest.sh</code> manually.</p>
           </div>
         )}
       </header>
 
-      {/* CROSS-ASSET */}
+      {/* ─── INSIGHT CARDS ─── */}
+      {insights.length > 0 && (
+        <section>
+          <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-400 mb-3">What&apos;s moving</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {insights.map((c, i) => {
+              const border = c.tone === "positive" ? "border-emerald-800/60"
+                          : c.tone === "warning"  ? "border-amber-800/60"
+                          :                          "border-neutral-800";
+              const titleColor = c.tone === "positive" ? "text-emerald-300"
+                              : c.tone === "warning"  ? "text-amber-300"
+                              :                          "text-neutral-300";
+              return (
+                <div key={i} className={`rounded-md border ${border} p-3`}>
+                  <div className={`text-xs font-medium uppercase tracking-wide ${titleColor}`}>{c.title}</div>
+                  <div className="mt-1 text-sm text-neutral-200">{c.body}</div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
+      {/* ─── SECTOR ROTATION MATRIX ─── */}
       <section>
-        <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-400 mb-3">
-          Cross-asset — where the money is moving (last 12 months)
-        </h2>
-        <div className="rounded-md border border-neutral-800">
-          <table className="w-full text-sm">
-            <thead className="bg-neutral-900 text-left text-xs uppercase tracking-wider text-neutral-400">
-              <tr>
-                <th className="px-3 py-2 font-medium">Asset class</th>
-                <th className="px-3 py-2 font-medium">Pattern</th>
-                <th className="px-3 py-2 font-medium text-right">Stock price 1y</th>
-                <th className="px-3 py-2 font-medium text-right">Fund flow 1y</th>
-                <th className="px-3 py-2 font-medium text-right">AUM</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-neutral-800">
-              {crossAsset
-                .sort((a, b) => (b.flow_pct ?? -999) - (a.flow_pct ?? -999))
-                .map((a) => {
-                  const div = DIVERGENCE_INFO[a.divergence];
-                  return (
-                    <tr key={a.meta.ticker} className="hover:bg-neutral-900/50">
-                      <td className="px-3 py-2">
-                        <div className="text-neutral-100">{a.meta.label}</div>
-                        <div className="text-xs text-neutral-500 font-mono">{a.meta.ticker}</div>
-                      </td>
-                      <td className={`px-3 py-2 text-xs ${div.color}`} title={div.explainer}>
-                        {div.label}
-                      </td>
-                      <td className={`px-3 py-2 text-right tabular-nums ${(a.price_return_1y ?? 0) >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                        {fmtPct(a.price_return_1y)}
-                      </td>
-                      <td className={`px-3 py-2 text-right tabular-nums ${a.flow_pct == null ? "text-neutral-500" : a.flow_pct >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                        {fmtPct(a.flow_pct)}
-                      </td>
-                      <td className="px-3 py-2 text-right text-neutral-400 tabular-nums">{fmtUsd(a.latest_aum)}</td>
-                    </tr>
-                  );
-                })}
-            </tbody>
-          </table>
-        </div>
-        <p className="mt-2 text-xs text-neutral-500">
-          Sorted by fund-flow direction. Watch for <span className="text-amber-300">Distribution ⚠</span> (stocks up but money leaving) and <span className="text-sky-300">Accumulation ⚠</span> (stocks down but money flowing in) — those are the actionable patterns.
-        </p>
+        <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-400 mb-3">Sector rotation matrix — 3M view</h2>
+        <RotationMatrix rows={rows} />
       </section>
 
-      {/* US SECTOR ROTATION */}
-      <section>
-        <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-400 mb-3">
-          US Sector rotation (11 SPDRs) — Flow vs Price side-by-side
-        </h2>
-        <div className="rounded-md border border-neutral-800">
-          <table className="w-full text-sm">
-            <thead className="bg-neutral-900 text-left text-xs uppercase tracking-wider text-neutral-400">
-              <tr>
-                <th className="px-3 py-2 font-medium">Sector</th>
-                <th className="px-3 py-2 font-medium text-right">AUM</th>
-                <th className="px-3 py-2 font-medium text-right">1y Stock Price</th>
-                <th className="px-3 py-2 font-medium text-right">1y Fund Flow</th>
-                <th className="px-3 py-2 font-medium text-right">Flow % of fund</th>
-                <th className="px-3 py-2 font-medium">Pattern</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-neutral-800">
-              {sectors
-                .sort((a, b) => (b.flow_pct ?? -999) - (a.flow_pct ?? -999))
-                .map((a) => {
-                  const div = DIVERGENCE_INFO[a.divergence];
-                  return (
-                    <tr key={a.meta.ticker} className="hover:bg-neutral-900/50">
-                      <td className="px-3 py-2">
-                        <div className="text-neutral-100">{a.meta.label}</div>
-                        <div className="text-xs text-neutral-500 font-mono">{a.meta.ticker}</div>
-                      </td>
-                      <td className="px-3 py-2 text-right text-neutral-300 tabular-nums">{fmtUsd(a.latest_aum)}</td>
-                      <td className={`px-3 py-2 text-right tabular-nums ${(a.price_return_1y ?? 0) >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                        {fmtPct(a.price_return_1y)}
-                      </td>
-                      <td className={`px-3 py-2 text-right tabular-nums ${a.flow_1y == null ? "text-neutral-500" : a.flow_1y >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                        {fmtFlow(a.flow_1y)}
-                      </td>
-                      <td className={`px-3 py-2 text-right tabular-nums ${a.flow_pct == null ? "text-neutral-500" : a.flow_pct >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                        {fmtPct(a.flow_pct)}
-                      </td>
-                      <td className={`px-3 py-2 text-xs ${div.color}`} title={div.explainer}>
-                        {div.label}
-                      </td>
-                    </tr>
-                  );
-                })}
-            </tbody>
-          </table>
+      {/* ─── MONEY ROTATING IN / OUT ─── */}
+      <section className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div>
+          <h2 className="text-sm font-medium uppercase tracking-wider text-emerald-300 mb-3">Money rotating IN</h2>
+          <p className="text-xs text-neutral-500 mb-2">1M flow positive and accelerating vs the 6M baseline.</p>
+          <div className="rounded-md border border-emerald-900/40">
+            <table className="w-full text-sm">
+              <thead className="bg-neutral-900 text-left text-xs uppercase tracking-wider text-neutral-400">
+                <tr>
+                  <th className="px-3 py-2 font-medium">ETF</th>
+                  <th className="px-3 py-2 font-medium text-right">1M flow</th>
+                  <th className="px-3 py-2 font-medium text-right">6M flow</th>
+                  <th className="px-3 py-2 font-medium text-right">1M price</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-neutral-900">
+                {rotatingIn.length === 0 && (
+                  <tr><td colSpan={4} className="px-3 py-4 text-neutral-500 text-xs">No ETFs meet the rotating-in criteria right now.</td></tr>
+                )}
+                {rotatingIn.map((r) => (
+                  <tr key={r.ticker}>
+                    <td className="px-3 py-2">
+                      <span className="text-neutral-100">{r.meta.label}</span>{" "}
+                      <span className="text-xs text-neutral-500 font-mono">({r.ticker})</span>
+                    </td>
+                    <td className={`px-3 py-2 text-right tabular-nums ${pctColor(r.flow_pct_1m)}`}>{fmtFlow(r.flow_pct_1m)}</td>
+                    <td className={`px-3 py-2 text-right tabular-nums ${pctColor(r.flow_pct_6m)}`}>{fmtFlow(r.flow_pct_6m)}</td>
+                    <td className={`px-3 py-2 text-right tabular-nums ${pctColor(r.price_return_1m)}`}>{fmtPriceRet(r.price_return_1m)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
-        <p className="mt-2 text-xs text-neutral-500">
-          Sorted by Flow %. Look for <span className="text-amber-300">Distribution ⚠</span> (stocks up but money leaving) and <span className="text-sky-300">Accumulation ⚠</span> (stocks down but money flowing in) — those are the most useful patterns.
-        </p>
+
+        <div>
+          <h2 className="text-sm font-medium uppercase tracking-wider text-red-300 mb-3">Money rotating OUT</h2>
+          <p className="text-xs text-neutral-500 mb-2">1M flow negative and accelerating vs the 6M baseline.</p>
+          <div className="rounded-md border border-red-900/40">
+            <table className="w-full text-sm">
+              <thead className="bg-neutral-900 text-left text-xs uppercase tracking-wider text-neutral-400">
+                <tr>
+                  <th className="px-3 py-2 font-medium">ETF</th>
+                  <th className="px-3 py-2 font-medium text-right">1M flow</th>
+                  <th className="px-3 py-2 font-medium text-right">6M flow</th>
+                  <th className="px-3 py-2 font-medium text-right">1M price</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-neutral-900">
+                {rotatingOut.length === 0 && (
+                  <tr><td colSpan={4} className="px-3 py-4 text-neutral-500 text-xs">No ETFs meet the rotating-out criteria right now.</td></tr>
+                )}
+                {rotatingOut.map((r) => (
+                  <tr key={r.ticker}>
+                    <td className="px-3 py-2">
+                      <span className="text-neutral-100">{r.meta.label}</span>{" "}
+                      <span className="text-xs text-neutral-500 font-mono">({r.ticker})</span>
+                    </td>
+                    <td className={`px-3 py-2 text-right tabular-nums ${pctColor(r.flow_pct_1m)}`}>{fmtFlow(r.flow_pct_1m)}</td>
+                    <td className={`px-3 py-2 text-right tabular-nums ${pctColor(r.flow_pct_6m)}`}>{fmtFlow(r.flow_pct_6m)}</td>
+                    <td className={`px-3 py-2 text-right tabular-nums ${pctColor(r.price_return_1m)}`}>{fmtPriceRet(r.price_return_1m)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
       </section>
 
-      {/* THEMES */}
+      {/* ─── MULTI-TIMEFRAME TABLE (with reading column) ─── */}
       <section>
         <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-400 mb-3">
-          Themes — modern verticals
+          All ETFs — price + flow + reading
         </h2>
-        <div className="rounded-md border border-neutral-800">
+        <p className="text-xs text-neutral-500 mb-2">
+          Showing {selected.map((t) => TF_LABEL[t]).join(" + ")}. Toggle pills above to add or remove timeframes.
+        </p>
+        <div className="rounded-md border border-neutral-800 overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-neutral-900 text-left text-xs uppercase tracking-wider text-neutral-400">
               <tr>
-                <th className="px-3 py-2 font-medium">Theme</th>
-                <th className="px-3 py-2 font-medium">Ticker</th>
-                <th className="px-3 py-2 font-medium text-right">AUM</th>
-                <th className="px-3 py-2 font-medium text-right">1y Stock Price</th>
-                <th className="px-3 py-2 font-medium text-right">1y Fund Flow</th>
-                <th className="px-3 py-2 font-medium text-right">Flow % of fund</th>
-                <th className="px-3 py-2 font-medium">Pattern</th>
+                <th rowSpan={2} className="px-3 py-2 font-medium border-r border-neutral-800 align-bottom">ETF</th>
+                <th rowSpan={2} className="px-3 py-2 font-medium border-r border-neutral-800 align-bottom" title="Flow data freshness">Source</th>
+                {selected.length > 0 && (
+                  <>
+                    <th colSpan={selected.length} className="px-3 py-1 font-medium text-center border-r border-neutral-800 border-b border-neutral-800">Price return</th>
+                    <th colSpan={selected.length} className="px-3 py-1 font-medium text-center border-r border-neutral-800 border-b border-neutral-800">Flow % of AUM</th>
+                  </>
+                )}
+                <th rowSpan={2} className="px-3 py-2 font-medium align-bottom">Reading</th>
+              </tr>
+              <tr>
+                {selected.map((tf) => (
+                  <th key={`p-${tf}`} className="px-3 py-1 font-medium text-right">{TF_LABEL[tf]}</th>
+                ))}
+                {selected.map((tf, i) => (
+                  <th key={`f-${tf}`} className={`px-3 py-1 font-medium text-right ${i === selected.length - 1 ? "border-r border-neutral-800" : ""}`}>{TF_LABEL[tf]}</th>
+                ))}
               </tr>
             </thead>
-            <tbody className="divide-y divide-neutral-800">
-              {themes
-                .sort((a, b) => (b.flow_pct ?? -999) - (a.flow_pct ?? -999))
-                .map((a) => {
-                  const div = DIVERGENCE_INFO[a.divergence];
-                  return (
-                    <tr key={a.meta.ticker} className="hover:bg-neutral-900/50">
-                      <td className="px-3 py-2">
-                        <div className="text-neutral-100">{a.meta.label}</div>
-                        <div className="text-xs text-neutral-500">{a.meta.long_name}</div>
+            <tbody>
+              {themeOrder.flatMap((g) => {
+                const groupRows = byTheme.get(g) ?? [];
+                if (groupRows.length === 0) return [];
+                return [
+                  <tr key={`hdr-${g}`} className="bg-neutral-950/80">
+                    <td colSpan={3 + 2 * selected.length} className="px-3 py-1.5 text-xs uppercase tracking-wider text-neutral-500 border-t border-neutral-800">
+                      {THEME_LABEL[g]}
+                    </td>
+                  </tr>,
+                  ...groupRows.map((r) => {
+                    const badge = SOURCE_BADGE[r.source_kind];
+                    return (
+                    <tr key={r.ticker} className="hover:bg-neutral-900/40 border-t border-neutral-900">
+                      <td className="px-3 py-2 border-r border-neutral-900 whitespace-nowrap">
+                        <div className="text-neutral-100">{r.meta.label}</div>
+                        <div className="text-xs text-neutral-500 font-mono">{r.ticker}</div>
                       </td>
-                      <td className="px-3 py-2 text-neutral-300 font-mono">{a.meta.ticker}</td>
-                      <td className="px-3 py-2 text-right text-neutral-300 tabular-nums">{fmtUsd(a.latest_aum)}</td>
-                      <td className={`px-3 py-2 text-right tabular-nums ${(a.price_return_1y ?? 0) >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                        {fmtPct(a.price_return_1y)}
+                      <td className="px-3 py-2 border-r border-neutral-900 whitespace-nowrap" title={`${badge.explain}${r.flow_data_as_of ? `\nAs of: ${r.flow_data_as_of}` : ""}`}>
+                        <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-medium border ${badge.color}`}>
+                          {badge.label}
+                        </span>
+                        {r.flow_data_as_of && (
+                          <div className="text-[10px] text-neutral-500 mt-0.5 font-mono">{r.flow_data_as_of}</div>
+                        )}
                       </td>
-                      <td className={`px-3 py-2 text-right tabular-nums ${a.flow_1y == null ? "text-neutral-500" : a.flow_1y >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                        {fmtFlow(a.flow_1y)}
-                      </td>
-                      <td className={`px-3 py-2 text-right tabular-nums ${a.flow_pct == null ? "text-neutral-500" : a.flow_pct >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                        {fmtPct(a.flow_pct)}
-                      </td>
-                      <td className={`px-3 py-2 text-xs ${div.color}`} title={div.explainer}>
-                        {div.label}
+                      {selected.map((tf) => (
+                        <td key={`p-${tf}`} className={`px-3 py-2 text-right tabular-nums ${pctColor(priceFor(r, tf))}`}>
+                          {fmtPriceRet(priceFor(r, tf))}
+                        </td>
+                      ))}
+                      {selected.map((tf, i) => (
+                        <td key={`f-${tf}`} className={`px-3 py-2 text-right tabular-nums ${pctColor(flowFor(r, tf))} ${i === selected.length - 1 ? "border-r border-neutral-900" : ""}`}>
+                          {fmtFlow(flowFor(r, tf))}
+                        </td>
+                      ))}
+                      <td className="px-3 py-2 text-xs text-neutral-300 leading-snug">
+                        {reading(r, selected)}
                       </td>
                     </tr>
-                  );
-                })}
+                    );
+                  }),
+                ];
+              })}
             </tbody>
           </table>
         </div>
       </section>
+
+      <footer className="text-xs text-neutral-500 pt-4 border-t border-neutral-900 space-y-2">
+        <p>
+          <span className="text-emerald-300 font-medium">live</span> = daily flow computed from issuer&apos;s shares-outstanding × NAV, fresh to yesterday. Currently the 10 iShares ETFs (TLT, IEF, IGV, SOXX, EEM, EFA, IBB, ITA, ICLN, IBIT). Same calculation etf.com / Bloomberg use.
+        </p>
+        <p>
+          <span className="text-amber-300 font-medium">~2-3mo</span> = back-solved from individual public N-PORT filing (with dividend-bias correction), 60-90 day filing lag.
+        </p>
+        <p>
+          <span className="text-neutral-400 font-medium">~4-5mo</span> = SEC DERA bulk N-PORT dataset (authoritative monthly sales-redemption), 1-quarter publish lag. Fallback for ETFs not yet covered by an issuer-direct feed.
+        </p>
+        <p>
+          Newest flow data across the universe: <span className="text-neutral-300">{fmtDate(latestAsOf)}</span>. Oldest most-recent: <span className="text-neutral-300">{fmtDate(earliestAsOf)}</span>. Price returns from yfinance daily close. GLD doesn&apos;t file N-PORT (commodity trust) and has no issuer feed yet — price only.
+        </p>
+      </footer>
     </div>
   );
 }
