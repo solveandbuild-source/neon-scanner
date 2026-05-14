@@ -1,5 +1,13 @@
 import { supabaseServer } from "@/lib/supabase";
 import { filerInfo, tier } from "@/lib/filers";
+
+// Color classes for the signal-quality tier chip (S/A/B/C).
+const TIER_CHIP: Record<"S" | "A" | "B" | "C", string> = {
+  S: "bg-emerald-600/30 text-emerald-300 border border-emerald-700/50",
+  A: "bg-sky-600/30 text-sky-300 border border-sky-700/50",
+  B: "bg-neutral-800 text-neutral-400 border border-neutral-700",
+  C: "bg-neutral-800 text-neutral-500 border border-neutral-700",
+};
 import { daysAgo } from "@/lib/format";
 
 // Holdings view: per-filer most recent 13F snapshot, with top positions by value.
@@ -187,9 +195,20 @@ export default async function HoldingsPage() {
           <div key={f.cik} className={`rounded-md border border-neutral-800 border-l-2 ${borderL} overflow-hidden`}>
             <div className="px-3 py-2 bg-neutral-900 flex items-baseline justify-between gap-2">
               <div className="min-w-0">
-                <div className="font-medium text-neutral-100 truncate" title={f.name}>{info?.entity ?? f.name}</div>
-                {info?.manager && (
-                  <div className="text-xs text-neutral-500">{info.manager} · {info.category}</div>
+                <div className="flex items-center gap-1.5 min-w-0">
+                  {info?.signalTier && (
+                    <span className={`px-1 text-[10px] font-mono rounded shrink-0 ${TIER_CHIP[info.signalTier]}`} title={`Signal-quality tier: ${info.signalTier}`}>
+                      {info.signalTier}
+                    </span>
+                  )}
+                  <div className="font-medium text-neutral-100 truncate" title={f.name}>{info?.entity ?? f.name}</div>
+                </div>
+                {(info?.manager || info?.badge) && (
+                  <div className="text-xs text-neutral-500 truncate">
+                    {info?.manager && <span>{info.manager}</span>}
+                    {info?.manager && info?.badge && <span className="text-neutral-700"> · </span>}
+                    {info?.badge && <span className="italic">{info.badge}</span>}
+                  </div>
                 )}
               </div>
               <div className="text-right shrink-0">
