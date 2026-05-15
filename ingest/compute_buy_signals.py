@@ -169,12 +169,47 @@ def main() -> None:
         return 7.0 + (n - 3) * 1.0
 
     # ─── 13F new / add / velocity ───────────────────────────────────────
+    # Bug-fix May 2026: previously a filer's trajectory was treated as "new"
+    # whenever len(tr)==1, regardless of how OLD that one position was — so
+    # Druckenmiller's Q1 2024 NXE (long since exited) showed as a current "new"
+    # signal in May 2026. Two filters added:
+    #
+    #   1) EXIT DETECTION — if the filer has filed a more recent 13F that does
+    #      NOT contain this ticker, they exited. Skip them as a contributor.
+    #
+    #   2) RECENCY CUTOFF — even the filer's latest entry for this ticker
+    #      must be within the last 180 days (≈2 quarters + filing buffer).
+    #      Anything older means the trajectory is stale.
+    #
+    # Both filters apply to new/add/velocity AND cross-Q confluence below.
+    filer_latest_period = {}
+    for c, fs in f13f.items():
+        periods = [f.get("period_of_report") or f["filed_at"][:10] for f in fs]
+        if periods:
+            filer_latest_period[c] = max(periods)
+
+    RECENCY_CUTOFF = (AS_OF - timedelta(days=180)).isoformat()
+
+    def is_stale(c, tr):
+        """True iff this filer→ticker trajectory should be excluded as stale."""
+        latest_period = tr[-1][0]
+        # Filer has filed more recently without the ticker = they exited
+        flp = filer_latest_period.get(c)
+        if flp and flp > latest_period:
+            return True
+        # Even the latest entry is older than 180 days
+        if latest_period < RECENCY_CUTOFF:
+            return True
+        return False
+
     new_pos = defaultdict(list)
     add_pos = defaultdict(list)
     velocity = defaultdict(list)
     contributing_filings = defaultdict(set)  # ticker -> set of filed_at dates contributing
     for (c, t), tr in traj.items():
         if t not in universe:
+            continue
+        if is_stale(c, tr):
             continue
         mult = FILER_MULT[c]
         latest = tr[-1]
@@ -215,12 +250,16 @@ def main() -> None:
     def s_13d(t): return sum(m for _, m in act_13d.get(t, [])) * 5.0
 
     # ─── Cross-Q confluence ─────────────────────────────────────────────
+    # Same staleness filter as new/add — a filer who initiated in some quarter
+    # but has since exited shouldn't count for cross-Q confluence either.
     all_periods = sorted({tr[-1][0] for tr in traj.values()}, reverse=True)
     lp = all_periods[0] if all_periods else None
     pp = all_periods[1] if len(all_periods) > 1 else None
     iq1, iq2 = defaultdict(list), defaultdict(list)
     for (c, t), tr in traj.items():
         if t not in universe:
+            continue
+        if is_stale(c, tr):
             continue
         earliest = tr[0][0]
         if earliest == lp:
