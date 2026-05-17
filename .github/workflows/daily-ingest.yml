@@ -36,7 +36,7 @@ jobs:
   # ──────────────────────────────────────────────────────────────────
   yahoo:
     runs-on: ubuntu-latest
-    timeout-minutes: 90    # prices.py alone at 0.3s × 10K = ~50min
+    timeout-minutes: 300   # 5h ceiling. prices.py @ 0.3s × 10K = ~50min PLUS Yahoo AUM + iShares + etf_metrics. Bumped May 2026 after scheduled runs were consistently timing out at the original 90min and dropping Q1 13F ingest.
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -71,7 +71,7 @@ jobs:
   # ──────────────────────────────────────────────────────────────────
   sec-edgar:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 300   # 5h ceiling. 8-K Groq summarization (paced ~10/min) + parse_13f/13d/form4 + form4_universe combined exceeds the original 90min on filing-heavy days. Bumped May 2026 after Q1 13F deadline runs timed out.
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
