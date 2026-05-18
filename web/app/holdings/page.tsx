@@ -1,5 +1,6 @@
 import { supabaseServer } from "@/lib/supabase";
 import { filerInfo, tier } from "@/lib/filers";
+import { TierFilter } from "@/components/TierFilter";
 
 // Force dynamic rendering. Without this, Next.js statically renders the page
 // at build time and serves the snapshot from the deploy. After May 17 we
@@ -147,8 +148,32 @@ function fmtUsd(n: number | null): string {
   return `$${n.toFixed(0)}`;
 }
 
-export default async function HoldingsPage() {
+type SP = { tier?: string };
+type Tier = "S" | "A" | "B" | "C";
+const ALL_TIERS: Tier[] = ["S", "A", "B", "C"];
+
+export default async function HoldingsPage({ searchParams }: { searchParams: Promise<SP> }) {
+  const sp = await searchParams;
   const { filers, total } = await fetchHoldings();
+
+  // Compute counts per tier across all filers (BEFORE filtering) for the chip badges
+  const tierCounts: Record<Tier, number> = { S: 0, A: 0, B: 0, C: 0 };
+  for (const f of filers) {
+    const t = (filerInfo(f.cik)?.signalTier ?? "B") as Tier;
+    tierCounts[t] = (tierCounts[t] ?? 0) + 1;
+  }
+
+  // Parse selected tiers from URL. Missing param = show all.
+  const selectedTiers: Set<Tier> = sp.tier
+    ? new Set(sp.tier.split(",").filter((t): t is Tier => (ALL_TIERS as string[]).includes(t)))
+    : new Set(ALL_TIERS);
+
+  // Filter filers to only those whose signalTier is in selectedTiers
+  const visibleFilers = filers.filter((f) => {
+    const t = (filerInfo(f.cik)?.signalTier ?? "B") as Tier;
+    return selectedTiers.has(t);
+  });
+
   if (filers.length === 0) {
     return (
       <div className="max-w-3xl mx-auto py-12 text-center space-y-3">
@@ -172,6 +197,8 @@ export default async function HoldingsPage() {
         </p>
       </header>
 
+      <TierFilter counts={tierCounts} />
+
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-neutral-500">
         <span><span className="inline-block w-2 h-2 align-middle mr-1 bg-amber-500"></span>activist filer</span>
         <span><span className="inline-block w-2 h-2 align-middle mr-1 bg-sky-500"></span>corporate strategic</span>
@@ -181,8 +208,13 @@ export default async function HoldingsPage() {
         <span><span className="text-amber-400">Mark/sh</span> = quarter-end price, NOT entry price</span>
       </div>
 
+      {visibleFilers.length === 0 ? (
+        <div className="text-sm text-neutral-500 italic py-12 text-center border border-neutral-900 rounded">
+          No filers match the selected tier(s). Toggle a tier above to expand the view.
+        </div>
+      ) : (
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {filers.map((f) => {
+        {visibleFilers.map((f) => {
           const info = filerInfo(f.cik);
           const t = tier(f.cik);
           const borderL = t === 2 ? "border-l-amber-500" : t === 1 ? "border-l-sky-500" : "border-l-neutral-800";
@@ -266,6 +298,7 @@ export default async function HoldingsPage() {
           );
         })}
       </div>
+      )}
     </div>
   );
 }
