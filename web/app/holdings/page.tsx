@@ -27,12 +27,13 @@ type Holding = {
   period_of_report: string;
   filed_at: string;  // when the 13F was actually filed (≠ period_of_report)
   cusip: string;
+  ticker: string | null;
   issuer_name: string | null;
   shares: number | null;
   value_usd: number | null;
 };
 
-async function fetchHoldings(): Promise<{ filers: FilerSummary[]; total: number }> {
+async function fetchHoldings(): Promise<{ filers: FilerSummary[]; total: number; prices: Record<string, number> }> {
   const sb = supabaseServer();
   // pull all holdings with filer name joined via the filing
   const out: Holding[] = [];
@@ -42,7 +43,7 @@ async function fetchHoldings(): Promise<{ filers: FilerSummary[]; total: number 
     const { data, error } = await sb
       .from("holdings_13f")
       .select(
-        "cik,period_of_report,cusip,issuer_name,shares,value_usd,filings_raw!inner(filer_name,filed_at)",
+        "cik,period_of_report,cusip,ticker,issuer_name,shares,value_usd,filings_raw!inner(filer_name,filed_at)",
       )
       .order("period_of_report", { ascending: false })
       .range(from, from + page - 1);
@@ -55,6 +56,7 @@ async function fetchHoldings(): Promise<{ filers: FilerSummary[]; total: number 
         period_of_report: r.period_of_report,
         filed_at: r.filings_raw?.filed_at ?? "",
         cusip: r.cusip,
+        ticker: r.ticker,
         issuer_name: r.issuer_name,
         shares: r.shares,
         value_usd: r.value_usd,
@@ -120,7 +122,29 @@ async function fetchHoldings(): Promise<{ filers: FilerSummary[]; total: number 
   const filers = Array.from(byFiler.values()).sort(
     (a, b) => b.latestFiledAt.localeCompare(a.latestFiledAt),
   );
-  return { filers, total: out.length };
+
+  // Fetch latest closing prices for every ticker visible in the top-10 lists.
+  // Used by the UI to render "Now" column + Δ% move-since-quarter-end.
+  const tickerSet = new Set<string>();
+  for (const f of filers) {
+    for (const p of f.positions) {
+      if (p.ticker) tickerSet.add(p.ticker);
+    }
+  }
+  const prices: Record<string, number> = {};
+  if (tickerSet.size > 0) {
+    // Batch tickers so we don't blow Supabase's URL length on 800+ tickers
+    const tickersArr = Array.from(tickerSet);
+    const batchSize = 200;
+    for (let i = 0; i < tickersArr.length; i += batchSize) {
+      const batch = tickersArr.slice(i, i + batchSize);
+      const { data } = await sb.from("tickers").select("ticker,price").in("ticker", batch);
+      for (const row of data ?? []) {
+        if (row.price != null) prices[row.ticker] = row.price;
+      }
+    }
+  }
+  return { filers, total: out.length, prices };
 }
 
 type FilerSummary = {
@@ -151,7 +175,7 @@ function fmtUsd(n: number | null): string {
 type Tier = "S" | "A" | "B" | "C";
 
 export default async function HoldingsPage() {
-  const { filers, total } = await fetchHoldings();
+  const { filers, total, prices } = await fetchHoldings();
 
   // Compute counts per tier across all filers for the filter-chip badges.
   // Filtering itself is done client-side by TierFilter (toggles .hidden on
@@ -256,12 +280,24 @@ export default async function HoldingsPage() {
                   <th className="px-3 py-1 text-right font-medium">Value</th>
                   <th className="px-3 py-1 text-right font-medium" title="Position value as % of this filer's total US-equity portfolio">% of port</th>
                   <th className="px-3 py-1 text-right font-medium" title="Quarter-end market value per share (value ÷ shares). NOT the actual entry price the filer paid.">Mark/sh</th>
+                  <th className="px-3 py-1 text-right font-medium" title="Latest closing price from yfinance">Now</th>
+                  <th className="px-3 py-1 text-right font-medium" title="% move from quarter-end Mark to today's close. Positive = filer is on paper gain since 13F period; negative = underwater.">Δ%</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-neutral-800">
                 {f.positions.map((h, i) => {
                   const pct = f.totalValue > 0 && h.value_usd != null ? (h.value_usd / f.totalValue) * 100 : null;
                   const markPrice = h.value_usd != null && h.shares && h.shares > 0 ? h.value_usd / h.shares : null;
+                  const nowPrice = h.ticker ? prices[h.ticker] ?? null : null;
+                  const deltaPct = markPrice != null && nowPrice != null && markPrice > 0
+                    ? ((nowPrice - markPrice) / markPrice) * 100
+                    : null;
+                  const deltaColor = deltaPct == null
+                    ? "text-neutral-500"
+                    : deltaPct >= 10 ? "text-emerald-400"
+                    : deltaPct >= 0 ? "text-emerald-400/70"
+                    : deltaPct >= -10 ? "text-red-400/70"
+                    : "text-red-400";
                   return (
                   <tr key={`${h.cusip}-${i}`}>
                     <td className="px-3 py-1 text-neutral-200 truncate max-w-[16ch]" title={`${h.issuer_name ?? ""} — CUSIP ${h.cusip}`}>{h.issuer_name ?? "—"}</td>
@@ -276,6 +312,12 @@ export default async function HoldingsPage() {
                     </td>
                     <td className="px-3 py-1 text-right text-neutral-400 tabular-nums">
                       {markPrice != null ? `$${markPrice.toFixed(2)}` : "—"}
+                    </td>
+                    <td className="px-3 py-1 text-right text-neutral-300 tabular-nums">
+                      {nowPrice != null ? `$${nowPrice.toFixed(2)}` : "—"}
+                    </td>
+                    <td className={`px-3 py-1 text-right tabular-nums ${deltaColor}`}>
+                      {deltaPct != null ? `${deltaPct >= 0 ? "+" : ""}${deltaPct.toFixed(1)}%` : "—"}
                     </td>
                   </tr>
                   );
