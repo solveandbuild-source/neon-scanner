@@ -25,6 +25,7 @@ concurrency:
 env:
   SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
   SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+  SUPABASE_PAT: ${{ secrets.SUPABASE_PAT }}
   EDGAR_USER_AGENT: ${{ secrets.EDGAR_USER_AGENT }}
   GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
 
@@ -81,6 +82,12 @@ jobs:
           cache-dependency-path: requirements.txt
       - run: pip install -r requirements.txt
 
+      - name: Apply pending migrations
+        # Runs BEFORE every other ingest step so new columns/tables exist by the
+        # time parsers try to write to them. Idempotent — uses CREATE IF NOT EXISTS.
+        run: python -m ingest.migrate
+        continue-on-error: false  # block the pipeline if schema fails to apply
+
       - name: Poll EDGAR for new filings
         run: python -m ingest.edgar
         continue-on-error: true
@@ -117,6 +124,13 @@ jobs:
       - name: Compute BUY signals (signals_latest table — read source for /signals page)
         # Runs last in the SEC pipeline so it sees the freshest 13F + insider + 13D data
         run: python -m ingest.compute_buy_signals
+        continue-on-error: true
+
+      - name: Estimate per-(filer, ticker) cost basis via per-quarter VWAP proxy
+        # Runs after compute_buy_signals so the latest holdings are reflected.
+        # VWAPs are cached permanently per (ticker, quarter) so daily incremental
+        # runs are fast (~2-5 min); first full run is ~30-60 min.
+        run: python -m ingest.cost_basis
         continue-on-error: true
 
   # ──────────────────────────────────────────────────────────────────

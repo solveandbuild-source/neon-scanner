@@ -33,7 +33,15 @@ type Holding = {
   value_usd: number | null;
 };
 
-async function fetchHoldings(): Promise<{ filers: FilerSummary[]; total: number; prices: Record<string, number> }> {
+// Cost-basis estimate per (filer, ticker) — keyed `${cik}|${ticker}`.
+type CostEstimate = { estimated_cost_basis: number; first_seen_period: string };
+
+async function fetchHoldings(): Promise<{
+  filers: FilerSummary[];
+  total: number;
+  prices: Record<string, number>;
+  costs: Record<string, CostEstimate>;
+}> {
   const sb = supabaseServer();
   // pull all holdings with filer name joined via the filing
   const out: Holding[] = [];
@@ -144,7 +152,31 @@ async function fetchHoldings(): Promise<{ filers: FilerSummary[]; total: number;
       }
     }
   }
-  return { filers, total: out.length, prices };
+  // Cost-basis estimates (keyed cik|ticker). Populated by ingest/cost_basis.py.
+  // Missing rows = no usable VWAP yet (newly-tracked filer, illiquid ticker, etc.)
+  const costs: Record<string, CostEstimate> = {};
+  {
+    const cikSet = new Set(filers.map((f) => f.cik));
+    if (cikSet.size > 0) {
+      const ciksArr = Array.from(cikSet);
+      const batchSize = 100;
+      for (let i = 0; i < ciksArr.length; i += batchSize) {
+        const batch = ciksArr.slice(i, i + batchSize);
+        const { data } = await sb
+          .from("filer_position_cost")
+          .select("cik,ticker,estimated_cost_basis,first_seen_period")
+          .in("cik", batch);
+        for (const row of data ?? []) {
+          costs[`${row.cik}|${row.ticker}`] = {
+            estimated_cost_basis: row.estimated_cost_basis,
+            first_seen_period: row.first_seen_period,
+          };
+        }
+      }
+    }
+  }
+
+  return { filers, total: out.length, prices, costs };
 }
 
 type FilerSummary = {
@@ -175,7 +207,7 @@ function fmtUsd(n: number | null): string {
 type Tier = "S" | "A" | "B" | "C";
 
 export default async function HoldingsPage() {
-  const { filers, total, prices } = await fetchHoldings();
+  const { filers, total, prices, costs } = await fetchHoldings();
 
   // Compute counts per tier across all filers for the filter-chip badges.
   // Filtering itself is done client-side by TierFilter (toggles .hidden on
@@ -282,6 +314,8 @@ export default async function HoldingsPage() {
                   <th className="px-3 py-1 text-right font-medium" title="Quarter-end market value per share (value ÷ shares). NOT the actual entry price the filer paid.">Mark/sh</th>
                   <th className="px-3 py-1 text-right font-medium" title="Latest closing price from yfinance">Now</th>
                   <th className="px-3 py-1 text-right font-medium" title="% move from quarter-end Mark to today's close. Positive = filer is on paper gain since 13F period; negative = underwater.">Δ%</th>
+                  <th className="px-3 py-1 text-right font-medium" title="Estimated cost basis — weighted-avg $/share across all accumulation quarters, using each quarter's VWAP as a proxy for entry price. Typically ±15-25% off actual cost. Missing = no usable VWAP yet.">Est. cost</th>
+                  <th className="px-3 py-1 text-right font-medium" title="(Now - Est. cost) / Est. cost. Positive = filer is up vs estimated entry; negative = underwater. Treat as orientation, not precise P&L.">vs Cost</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-neutral-800">
@@ -297,6 +331,18 @@ export default async function HoldingsPage() {
                     : deltaPct >= 10 ? "text-emerald-400"
                     : deltaPct >= 0 ? "text-emerald-400/70"
                     : deltaPct >= -10 ? "text-red-400/70"
+                    : "text-red-400";
+                  // Estimated cost basis from filer_position_cost (proxy via per-quarter VWAP)
+                  const costEst = h.ticker ? costs[`${f.cik}|${h.ticker}`] : undefined;
+                  const estCost = costEst?.estimated_cost_basis ?? null;
+                  const vsCostPct = nowPrice != null && estCost != null && estCost > 0
+                    ? ((nowPrice - estCost) / estCost) * 100
+                    : null;
+                  const vsCostColor = vsCostPct == null
+                    ? "text-neutral-500"
+                    : vsCostPct >= 50 ? "text-emerald-300 font-semibold"
+                    : vsCostPct >= 0 ? "text-emerald-400/80"
+                    : vsCostPct >= -15 ? "text-red-400/70"
                     : "text-red-400";
                   return (
                   <tr key={`${h.cusip}-${i}`}>
@@ -318,6 +364,12 @@ export default async function HoldingsPage() {
                     </td>
                     <td className={`px-3 py-1 text-right tabular-nums ${deltaColor}`}>
                       {deltaPct != null ? `${deltaPct >= 0 ? "+" : ""}${deltaPct.toFixed(1)}%` : "—"}
+                    </td>
+                    <td className="px-3 py-1 text-right text-neutral-400 tabular-nums" title={costEst ? `Estimated from per-quarter VWAP, accumulating since ${costEst.first_seen_period}. Proxy — typically ±15-25% off true cost.` : "No cost-basis estimate yet (no usable VWAP)."}>
+                      {estCost != null ? `$${estCost.toFixed(2)}` : "—"}
+                    </td>
+                    <td className={`px-3 py-1 text-right tabular-nums ${vsCostColor}`}>
+                      {vsCostPct != null ? `${vsCostPct >= 0 ? "+" : ""}${vsCostPct.toFixed(0)}%` : "—"}
                     </td>
                   </tr>
                   );
