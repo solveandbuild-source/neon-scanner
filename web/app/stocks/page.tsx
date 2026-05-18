@@ -1,4 +1,6 @@
 import { supabaseServer } from "@/lib/supabase";
+
+export const dynamic = "force-dynamic";
 import { filerInfo, allFilers } from "@/lib/filers";
 
 // Stock-level view: pivot of holdings_13f by issuer (CUSIP).

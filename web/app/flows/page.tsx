@@ -1,5 +1,7 @@
 import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase";
+
+export const dynamic = "force-dynamic";
 import { ETF_UNIVERSE, type EtfMeta } from "@/lib/etfs";
 import { runStalenessChecks } from "@/lib/staleness";
 

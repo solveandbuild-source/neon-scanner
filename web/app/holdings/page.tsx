@@ -1,6 +1,12 @@
 import { supabaseServer } from "@/lib/supabase";
 import { filerInfo, tier } from "@/lib/filers";
 
+// Force dynamic rendering. Without this, Next.js statically renders the page
+// at build time and serves the snapshot from the deploy. After May 17 we
+// caught the holdings page serving Q3 2025 data because the cached build
+// pre-dated the Q1 2026 13F ingestion. Fresh DB read on every request.
+export const dynamic = "force-dynamic";
+
 // Color classes for the signal-quality tier chip (S/A/B/C).
 const TIER_CHIP: Record<"S" | "A" | "B" | "C", string> = {
   S: "bg-emerald-600/30 text-emerald-300 border border-emerald-700/50",

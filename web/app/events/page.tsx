@@ -1,4 +1,6 @@
 import { supabaseServer } from "@/lib/supabase";
+
+export const dynamic = "force-dynamic";
 import { daysAgo } from "@/lib/format";
 import { filerInfo, tier } from "@/lib/filers";
 import { FORMS } from "@/lib/glossary";

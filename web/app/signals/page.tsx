@@ -4,6 +4,11 @@ import { WatchlistToggle } from "@/components/WatchlistToggle";
 import { filerInfoByName, filerShortLabel } from "@/lib/filers";
 import Link from "next/link";
 
+// Force dynamic rendering — same reason as /holdings. Statically rendered
+// pages serve build-time data; this page reads from signals_latest which
+// changes hourly during filing seasons.
+export const dynamic = "force-dynamic";
+
 // /signals — BUY signal table, read from signals_latest.
 // Default threshold: score ≥ 7. Filter at top: text box "min score".
 
