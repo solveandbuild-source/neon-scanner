@@ -1,6 +1,7 @@
 import { supabaseServer } from "@/lib/supabase";
 import { filerInfo, tier } from "@/lib/filers";
 import { TierFilter } from "@/components/TierFilter";
+import { FilerCardTabs } from "@/components/FilerCardTabs";
 
 // Force dynamic rendering. Without this, Next.js statically renders the page
 // at build time and serves the snapshot from the deploy. After May 17 we
@@ -31,6 +32,7 @@ type Holding = {
   issuer_name: string | null;
   shares: number | null;
   value_usd: number | null;
+  put_call: string | null;  // 'Put' / 'Call' / null. Options are SHORT/HEDGE bets — we filter these out of long-holdings display.
 };
 
 // Cost-basis estimate per (filer, ticker) — keyed `${cik}|${ticker}`.
@@ -67,7 +69,7 @@ async function fetchHoldings(): Promise<{
     const { data, error } = await sb
       .from("holdings_13f")
       .select(
-        "cik,period_of_report,cusip,ticker,issuer_name,shares,value_usd,filings_raw!inner(filer_name,filed_at)",
+        "cik,period_of_report,cusip,ticker,issuer_name,shares,value_usd,put_call,filings_raw!inner(filer_name,filed_at)",
       )
       .order("period_of_report", { ascending: false })
       .range(from, from + page - 1);
@@ -84,6 +86,7 @@ async function fetchHoldings(): Promise<{
         issuer_name: r.issuer_name,
         shares: r.shares,
         value_usd: r.value_usd,
+        put_call: r.put_call ?? null,
       });
     }
     if (data.length < page) break;
@@ -118,44 +121,79 @@ async function fetchHoldings(): Promise<{
     filerMeta.get(h.cik)!.filedAt[h.period_of_report] = h.filed_at;
   }
 
+  // Aggregate by issuer (case-normalized name). Filters options (put/call)
+  // since those are short/hedge bets, not long holdings. Aggregating by
+  // issuer collapses cases where one issuer has multiple CUSIPs (e.g.
+  // Chesapeake legacy CUSIP + post-merger Expand Energy CUSIP).
+  const normIssuer = (n: string | null) => (n ?? "").toUpperCase().replace(/\s+/g, " ").trim();
+  function aggregateByIssuer(positions: Holding[]): Holding[] {
+    const m = new Map<string, Holding>();
+    for (const p of positions) {
+      if (p.put_call) continue;  // skip puts/calls
+      const key = normIssuer(p.issuer_name);
+      if (!key) continue;
+      const existing = m.get(key);
+      if (!existing) {
+        m.set(key, { ...p });
+      } else {
+        existing.shares = (existing.shares ?? 0) + (p.shares ?? 0);
+        existing.value_usd = (existing.value_usd ?? 0) + (p.value_usd ?? 0);
+      }
+    }
+    return Array.from(m.values());
+  }
+
   const byFiler = new Map<string, FilerSummary>();
   for (const [cik, periods] of byFilerByPeriod) {
     const sortedPeriods = Array.from(periods.keys()).sort().reverse();
     const latest = sortedPeriods[0];
     const prior = sortedPeriods[1] ?? null;
     const meta = filerMeta.get(cik)!;
-    const priorByCusip = prior
-      ? new Map(periods.get(prior)!.map((p) => [p.cusip, p]))
-      : new Map<string, Holding>();
-    const latestCusips = new Set(periods.get(latest)!.map((p) => p.cusip));
-    // Exits: in prior, not in latest. Sort by prior value desc.
-    const exits: Holding[] = prior
-      ? periods.get(prior)!
-          .filter((p) => !latestCusips.has(p.cusip))
+    const latestAgg = aggregateByIssuer(periods.get(latest)!);
+    const priorAgg = prior ? aggregateByIssuer(periods.get(prior)!) : [];
+    const priorByIssuer = new Map(priorAgg.map((p) => [normIssuer(p.issuer_name), p]));
+    const latestIssuers = new Set(latestAgg.map((p) => normIssuer(p.issuer_name)));
+
+    // News: in latest, not in prior. Sort by latest value desc.
+    const news: Holding[] = prior
+      ? latestAgg
+          .filter((p) => !priorByIssuer.has(normIssuer(p.issuer_name)))
           .sort((a, b) => (b.value_usd ?? 0) - (a.value_usd ?? 0))
       : [];
-    // Notable trims: shares down ≥30% Q-over-Q. Surface separately so they
-    // get visibility even when they're not in the top-10 by value.
+    // Adds: in both, shares up ≥10%. Sort by % desc.
+    const adds: Array<{ pos: Holding; prevShares: number; pct: number }> = [];
+    // Trims: in both, shares down ≥10%. Sort by % asc (most-trimmed first).
     const trims: Array<{ pos: Holding; prevShares: number; pct: number }> = [];
     if (prior) {
-      for (const p of periods.get(latest)!) {
-        const prev = priorByCusip.get(p.cusip);
+      for (const p of latestAgg) {
+        const prev = priorByIssuer.get(normIssuer(p.issuer_name));
         if (!prev || !prev.shares || prev.shares === 0) continue;
         const ratio = ((p.shares ?? 0) - prev.shares) / prev.shares;
-        if (ratio <= -0.30) trims.push({ pos: p, prevShares: prev.shares, pct: ratio * 100 });
+        if (ratio >= 0.10) adds.push({ pos: p, prevShares: prev.shares, pct: ratio * 100 });
+        else if (ratio <= -0.10) trims.push({ pos: p, prevShares: prev.shares, pct: ratio * 100 });
       }
-      trims.sort((a, b) => a.pct - b.pct);  // most-trimmed first
+      adds.sort((a, b) => b.pct - a.pct);
+      trims.sort((a, b) => a.pct - b.pct);
     }
+    // Exits: in prior, not in latest. Sort by prior value desc.
+    const exits: Holding[] = prior
+      ? priorAgg
+          .filter((p) => !latestIssuers.has(normIssuer(p.issuer_name)))
+          .sort((a, b) => (b.value_usd ?? 0) - (a.value_usd ?? 0))
+      : [];
+
     byFiler.set(cik, {
       cik,
       name: meta.name,
       latestPeriod: latest,
       latestFiledAt: meta.filedAt[latest] ?? "",
       priorPeriod: prior,
-      positions: periods.get(latest)!,
-      priorByCusip,
-      exits,
+      positions: latestAgg,
+      priorByCusip: priorByIssuer,  // now keyed by normalized issuer name (still called "ByCusip" for type compat — TODO rename)
+      news,
+      adds,
       trims,
+      exits,
       totalValue: 0,
       totalPositions: 0,
     });
@@ -271,9 +309,11 @@ type FilerSummary = {
   // priorByCusip = O(1) lookup for "did they hold this last quarter?".
   // exits = positions present last quarter but missing this quarter, sorted by prior value desc.
   priorPeriod: string | null;
-  priorByCusip: Map<string, Holding>;
-  exits: Holding[];
+  priorByCusip: Map<string, Holding>;  // keyed by normalized issuer name (not cusip — legacy field name)
+  news: Holding[];
+  adds: Array<{ pos: Holding; prevShares: number; pct: number }>;
   trims: Array<{ pos: Holding; prevShares: number; pct: number }>;
+  exits: Holding[];
   positions: Holding[];
   totalValue: number;       // sum of value_usd across ALL positions that quarter (not just top 10)
   totalPositions: number;   // count of all positions that quarter
@@ -309,6 +349,114 @@ function fmtUsd(n: number | null): string {
 }
 
 type Tier = "S" | "A" | "B" | "C";
+
+// "Changes vs last quarter" view body. Renders 4 row-based sections:
+// 🆕 New, + Adds, ⇣ Trims, ✕ Exits. Each item gets its own row.
+// Server component — pure rendering, no state.
+function ChangesView({ f }: { f: FilerSummary }) {
+  if (!f.priorPeriod) {
+    return (
+      <div className="px-3 py-6 text-[11px] text-neutral-500 italic text-center">
+        No prior 13F to compare. First-quarter filer or only one period of data.
+      </div>
+    );
+  }
+  const totalChanges = f.news.length + f.adds.length + f.trims.length + f.exits.length;
+  if (totalChanges === 0) {
+    return (
+      <div className="px-3 py-6 text-[11px] text-neutral-500 italic text-center">
+        No changes ≥10% vs prior quarter ({f.priorPeriod}).
+      </div>
+    );
+  }
+  const truncate = (s: string | null, n = 32) => {
+    const v = s ?? "?";
+    return v.length > n ? v.slice(0, n) + "…" : v;
+  };
+  return (
+    <div className="text-[11px]">
+      <div className="px-3 py-1.5 text-neutral-500 bg-neutral-950 border-b border-neutral-900">
+        Diff vs prior 13F (period {f.priorPeriod}) — share-count changes ≥10%
+      </div>
+
+      {f.news.length > 0 && (
+        <div>
+          <div className="px-3 py-1 bg-emerald-950/40 text-emerald-300 font-medium border-b border-emerald-900/30">
+            🆕 New positions ({f.news.length})
+          </div>
+          <table className="w-full">
+            <tbody className="divide-y divide-neutral-900">
+              {f.news.map((p) => (
+                <tr key={`new-${p.cusip}`} className="hover:bg-neutral-900/40">
+                  <td className="px-3 py-1 text-neutral-200 truncate max-w-[20ch]" title={p.issuer_name ?? ""}>{truncate(p.issuer_name)}</td>
+                  <td className="px-3 py-1 text-right text-neutral-300 tabular-nums">{fmtShares(p.shares)}</td>
+                  <td className="px-3 py-1 text-right text-neutral-300 tabular-nums">{fmtUsd(p.value_usd)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {f.adds.length > 0 && (
+        <div>
+          <div className="px-3 py-1 bg-emerald-950/30 text-emerald-400 font-medium border-b border-emerald-900/20">
+            + Added ({f.adds.length})
+          </div>
+          <table className="w-full">
+            <tbody className="divide-y divide-neutral-900">
+              {f.adds.map((a) => (
+                <tr key={`add-${a.pos.cusip}`} className="hover:bg-neutral-900/40">
+                  <td className="px-3 py-1 text-neutral-200 truncate max-w-[20ch]" title={a.pos.issuer_name ?? ""}>{truncate(a.pos.issuer_name)}</td>
+                  <td className="px-3 py-1 text-right text-neutral-400 tabular-nums">{fmtShares(a.prevShares)} → {fmtShares(a.pos.shares)}</td>
+                  <td className="px-3 py-1 text-right text-emerald-400 tabular-nums font-semibold">{fmtPctCompact(a.pct)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {f.trims.length > 0 && (
+        <div>
+          <div className="px-3 py-1 bg-amber-950/30 text-amber-400 font-medium border-b border-amber-900/20">
+            ⇣ Trimmed ({f.trims.length})
+          </div>
+          <table className="w-full">
+            <tbody className="divide-y divide-neutral-900">
+              {f.trims.map((t) => (
+                <tr key={`trim-${t.pos.cusip}`} className="hover:bg-neutral-900/40">
+                  <td className="px-3 py-1 text-neutral-200 truncate max-w-[20ch]" title={t.pos.issuer_name ?? ""}>{truncate(t.pos.issuer_name)}</td>
+                  <td className="px-3 py-1 text-right text-neutral-400 tabular-nums">{fmtShares(t.prevShares)} → {fmtShares(t.pos.shares)}</td>
+                  <td className="px-3 py-1 text-right text-amber-400 tabular-nums font-semibold">{fmtPctCompact(t.pct)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {f.exits.length > 0 && (
+        <div>
+          <div className="px-3 py-1 bg-red-950/30 text-red-400 font-medium border-b border-red-900/20">
+            ✕ Exited ({f.exits.length})
+          </div>
+          <table className="w-full">
+            <tbody className="divide-y divide-neutral-900">
+              {f.exits.map((e) => (
+                <tr key={`exit-${e.cusip}`} className="hover:bg-neutral-900/40">
+                  <td className="px-3 py-1 text-neutral-200 truncate max-w-[20ch]" title={e.issuer_name ?? ""}>{truncate(e.issuer_name)}</td>
+                  <td className="px-3 py-1 text-right text-neutral-400 tabular-nums">{fmtShares(e.shares)} sh</td>
+                  <td className="px-3 py-1 text-right text-red-400/80 tabular-nums">{fmtUsd(e.value_usd)} sold</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default async function HoldingsPage() {
   const { filers, total, prices, costs } = await fetchHoldings();
@@ -412,8 +560,11 @@ export default async function HoldingsPage() {
             </div>
             <div className="px-3 py-1 bg-neutral-950 text-[10px] text-neutral-500 flex justify-between">
               <span>Total portfolio: {fmtUsd(f.totalValue)}</span>
-              <span>{f.totalPositions} positions · showing top 10</span>
+              <span>{f.totalPositions} positions</span>
             </div>
+            <FilerCardTabs
+              changesCount={f.news.length + f.adds.length + f.trims.length + f.exits.length}
+              current={(
             <table className="w-full text-xs">
               <thead className="text-neutral-500">
                 <tr>
@@ -502,44 +653,9 @@ export default async function HoldingsPage() {
                 })}
               </tbody>
             </table>
-            {(f.exits.length > 0 || f.trims.length > 0) && (
-              <div className="px-3 py-2 border-t border-neutral-900 bg-neutral-950/60 text-[11px] space-y-2">
-                {f.exits.length > 0 && (
-                  <div>
-                    <div className="text-red-400/80 font-medium mb-1">
-                      ✕ Exited this quarter ({f.exits.length}{f.priorPeriod ? ` — vs ${f.priorPeriod}` : ""})
-                    </div>
-                    <div className="text-neutral-300 leading-relaxed">
-                      {f.exits.slice(0, 6).map((e, idx) => (
-                        <span key={e.cusip} className="inline-block mr-2">
-                          <span className="text-red-400">{(e.issuer_name ?? "?").length > 28 ? (e.issuer_name ?? "?").slice(0, 28) + "…" : (e.issuer_name ?? "?")}</span>
-                          <span className="text-neutral-500 ml-1">({fmtUsd(e.value_usd)})</span>
-                          {idx < Math.min(f.exits.length, 6) - 1 ? <span className="text-neutral-700">, </span> : null}
-                        </span>
-                      ))}
-                      {f.exits.length > 6 && <span className="text-neutral-500"> +{f.exits.length - 6} more</span>}
-                    </div>
-                  </div>
-                )}
-                {f.trims.length > 0 && (
-                  <div>
-                    <div className="text-amber-400/80 font-medium mb-1">
-                      ⇣ Major trims (≥30% reduction, {f.trims.length})
-                    </div>
-                    <div className="text-neutral-300 leading-relaxed">
-                      {f.trims.slice(0, 6).map((t, idx) => (
-                        <span key={t.pos.cusip} className="inline-block mr-2">
-                          <span className="text-amber-400">{(t.pos.issuer_name ?? "?").length > 28 ? (t.pos.issuer_name ?? "?").slice(0, 28) + "…" : (t.pos.issuer_name ?? "?")}</span>
-                          <span className="text-neutral-500 ml-1">({fmtPctCompact(t.pct)})</span>
-                          {idx < Math.min(f.trims.length, 6) - 1 ? <span className="text-neutral-700">, </span> : null}
-                        </span>
-                      ))}
-                      {f.trims.length > 6 && <span className="text-neutral-500"> +{f.trims.length - 6} more</span>}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
+              )}
+              changes={(<ChangesView f={f} />)}
+            />
           </div>
           );
         })}
