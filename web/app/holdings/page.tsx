@@ -71,7 +71,13 @@ async function fetchHoldings(): Promise<{
       .select(
         "cik,period_of_report,cusip,ticker,issuer_name,shares,value_usd,put_call,filings_raw!inner(filer_name,filed_at)",
       )
+      // Stable secondary sort on `id` is REQUIRED — without it PostgREST's
+      // page-window can drop rows that share the same period_of_report.
+      // Bug caught May 21: Druckenmiller's top positions (Natera, Insmed, TSM)
+      // were silently missing because his ~70 Q1 2026 rows were paginated
+      // unstably across multiple .range() calls.
       .order("period_of_report", { ascending: false })
+      .order("id", { ascending: true })
       .range(from, from + page - 1);
     if (error) throw error;
     if (!data || data.length === 0) break;
@@ -91,7 +97,7 @@ async function fetchHoldings(): Promise<{
     }
     if (data.length < page) break;
     from += page;
-    if (from > 50000) break; // hard cap during plumbing phase — full UI later
+    if (from > 200000) break; // raised from 50K → 200K. Caps at ~6-8 quarters of all filers; ensures latest 2 quarters always present in full.
   }
 
   // Dedupe amendments: for each (cik, period_of_report) keep ONLY rows from
