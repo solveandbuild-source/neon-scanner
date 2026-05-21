@@ -91,11 +91,25 @@ async function fetchHoldings(): Promise<{
     if (from > 50000) break; // hard cap during plumbing phase — full UI later
   }
 
+  // Dedupe amendments: for each (cik, period_of_report) keep ONLY rows from
+  // the latest filed_at. SEC 13F-HR/A amendments supersede the original;
+  // without this we triple-count positions when Oaktree files 13F + 2
+  // amendments (caught May 21 — TORM PLC was appearing 3× in their card).
+  const latestFiledByFilerPeriod = new Map<string, string>();  // `${cik}|${period}` → max filed_at
+  for (const h of out) {
+    const k = `${h.cik}|${h.period_of_report}`;
+    const cur = latestFiledByFilerPeriod.get(k);
+    if (!cur || h.filed_at > cur) latestFiledByFilerPeriod.set(k, h.filed_at);
+  }
+  const deduped = out.filter((h) =>
+    h.filed_at === latestFiledByFilerPeriod.get(`${h.cik}|${h.period_of_report}`),
+  );
+
   // For each filer, collect positions GROUPED BY period so we can diff the
   // latest quarter vs the prior quarter (CLAUDE.md §6.1: emit new/add/trim/exit).
   const byFilerByPeriod = new Map<string, Map<string, Holding[]>>();
   const filerMeta = new Map<string, { name: string; filedAt: Record<string, string> }>();
-  for (const h of out) {
+  for (const h of deduped) {
     if (!byFilerByPeriod.has(h.cik)) byFilerByPeriod.set(h.cik, new Map());
     const periods = byFilerByPeriod.get(h.cik)!;
     if (!periods.has(h.period_of_report)) periods.set(h.period_of_report, []);
@@ -120,6 +134,18 @@ async function fetchHoldings(): Promise<{
           .filter((p) => !latestCusips.has(p.cusip))
           .sort((a, b) => (b.value_usd ?? 0) - (a.value_usd ?? 0))
       : [];
+    // Notable trims: shares down ≥30% Q-over-Q. Surface separately so they
+    // get visibility even when they're not in the top-10 by value.
+    const trims: Array<{ pos: Holding; prevShares: number; pct: number }> = [];
+    if (prior) {
+      for (const p of periods.get(latest)!) {
+        const prev = priorByCusip.get(p.cusip);
+        if (!prev || !prev.shares || prev.shares === 0) continue;
+        const ratio = ((p.shares ?? 0) - prev.shares) / prev.shares;
+        if (ratio <= -0.30) trims.push({ pos: p, prevShares: prev.shares, pct: ratio * 100 });
+      }
+      trims.sort((a, b) => a.pct - b.pct);  // most-trimmed first
+    }
     byFiler.set(cik, {
       cik,
       name: meta.name,
@@ -129,6 +155,7 @@ async function fetchHoldings(): Promise<{
       positions: periods.get(latest)!,
       priorByCusip,
       exits,
+      trims,
       totalValue: 0,
       totalPositions: 0,
     });
@@ -246,6 +273,7 @@ type FilerSummary = {
   priorPeriod: string | null;
   priorByCusip: Map<string, Holding>;
   exits: Holding[];
+  trims: Array<{ pos: Holding; prevShares: number; pct: number }>;
   positions: Holding[];
   totalValue: number;       // sum of value_usd across ALL positions that quarter (not just top 10)
   totalPositions: number;   // count of all positions that quarter
@@ -256,6 +284,20 @@ function fmtShares(n: number | null): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(0)}K`;
   return n.toLocaleString();
+}
+
+// Compact % formatter for the Δ shares column. Caps massive values that
+// otherwise overflow the column (e.g. NEW positions building from 1 share
+// to 100k → "+10,000,000%" looks broken). Renders ≥1000% as multiples ("12×").
+function fmtPctCompact(pct: number): string {
+  const sign = pct >= 0 ? "+" : "";
+  const abs = Math.abs(pct);
+  if (abs >= 1000) {
+    const mult = pct / 100;  // 1234% = 12.34×
+    return `${sign}${mult.toFixed(0)}×`;
+  }
+  if (abs >= 100) return `${sign}${pct.toFixed(0)}%`;
+  return `${sign}${pct.toFixed(1)}%`;
 }
 
 function fmtUsd(n: number | null): string {
@@ -312,7 +354,12 @@ export default async function HoldingsPage() {
         <span><span className="text-emerald-400">filed &lt;14d ago</span> = fresh</span>
         <span><span className="text-red-400">filed &gt;120d ago</span> = stale</span>
         <span className="text-emerald-300">% of port ≥10% = high conviction</span>
-        <span><span className="text-amber-400">Mark/sh</span> = quarter-end price, NOT entry price</span>
+      </div>
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-neutral-500">
+        <span><span className="text-amber-400">Mark/sh</span> = quarter-end $/share (NOT entry)</span>
+        <span><span className="text-amber-400">Est. cost</span> = VWAP-proxy entry (±15-25%)</span>
+        <span><span className="text-amber-400">P&L</span> = (Now − Est. cost) / Est. cost — filer's paper gain</span>
+        <span><span className="text-amber-400">Δ shares</span> = share-count change vs prior 13F</span>
       </div>
 
       <div id="tier-filter-empty" className="hidden text-sm text-neutral-500 italic py-12 text-center border border-neutral-900 rounded">
@@ -376,10 +423,9 @@ export default async function HoldingsPage() {
                   <th className="px-3 py-1 text-right font-medium" title="Position value as % of this filer's total US-equity portfolio">% of port</th>
                   <th className="px-3 py-1 text-right font-medium" title="Quarter-end market value per share (value ÷ shares). NOT the actual entry price the filer paid.">Mark/sh</th>
                   <th className="px-3 py-1 text-right font-medium" title="Latest closing price from yfinance">Now</th>
-                  <th className="px-3 py-1 text-right font-medium" title="% move from quarter-end Mark to today's close. Positive = filer is on paper gain since 13F period; negative = underwater.">Δ%</th>
-                  <th className="px-3 py-1 text-right font-medium" title="Estimated cost basis — weighted-avg $/share across all accumulation quarters, using each quarter's VWAP as a proxy for entry price. Typically ±15-25% off actual cost. Missing = no usable VWAP yet.">Est. cost</th>
-                  <th className="px-3 py-1 text-right font-medium" title="(Now - Est. cost) / Est. cost. Positive = filer is up vs estimated entry; negative = underwater. Treat as orientation, not precise P&L.">vs Cost</th>
-                  <th className="px-3 py-1 text-right font-medium" title="Change vs the filer's PRIOR 13F quarter. NEW = didn't hold last quarter. +X% = added shares. -X% = trimmed. Empty = unchanged or no prior data.">vs Q-1</th>
+                  <th className="px-3 py-1 text-right font-medium" title="Estimated cost basis — weighted-avg $/share across accumulation quarters, using each quarter's VWAP as a proxy. Typically ±15-25% off true cost. Missing = no usable VWAP yet.">Est. cost</th>
+                  <th className="px-3 py-1 text-right font-medium whitespace-nowrap" title="Filer's paper P&L: (Now - Est. cost) / Est. cost. Positive = filer is up vs estimated entry. NOT precise — Est. cost is a proxy.">P&L</th>
+                  <th className="px-3 py-1 text-right font-medium whitespace-nowrap" title="Filer behavior — change in SHARE COUNT vs their prior 13F. NEW = didn't hold last quarter. +X% = bought more. -X% = sold some. Different from P&L (which tracks price move, not share count change).">Δ shares</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-neutral-800">
@@ -387,15 +433,6 @@ export default async function HoldingsPage() {
                   const pct = f.totalValue > 0 && h.value_usd != null ? (h.value_usd / f.totalValue) * 100 : null;
                   const markPrice = h.value_usd != null && h.shares && h.shares > 0 ? h.value_usd / h.shares : null;
                   const nowPrice = h.ticker ? prices[h.ticker] ?? null : null;
-                  const deltaPct = markPrice != null && nowPrice != null && markPrice > 0
-                    ? ((nowPrice - markPrice) / markPrice) * 100
-                    : null;
-                  const deltaColor = deltaPct == null
-                    ? "text-neutral-500"
-                    : deltaPct >= 10 ? "text-emerald-400"
-                    : deltaPct >= 0 ? "text-emerald-400/70"
-                    : deltaPct >= -10 ? "text-red-400/70"
-                    : "text-red-400";
                   // Estimated cost basis from filer_position_cost (proxy via per-quarter VWAP)
                   const costEst = h.ticker ? costs[`${f.cik}|${h.ticker}`] : undefined;
                   const estCost = costEst?.estimated_cost_basis ?? null;
@@ -424,10 +461,10 @@ export default async function HoldingsPage() {
                     if (a > 0) {
                       const ratio = (b - a) / a;
                       if (ratio >= 0.05) {
-                        qDiffLabel = `+${(ratio * 100).toFixed(0)}%`;
+                        qDiffLabel = fmtPctCompact(ratio * 100);
                         qDiffColor = ratio >= 0.5 ? "text-emerald-300 font-semibold" : "text-emerald-400/80";
                       } else if (ratio <= -0.05) {
-                        qDiffLabel = `${(ratio * 100).toFixed(0)}%`;
+                        qDiffLabel = fmtPctCompact(ratio * 100);
                         qDiffColor = ratio <= -0.5 ? "text-red-400 font-semibold" : "text-red-400/80";
                       }
                     }
@@ -450,14 +487,11 @@ export default async function HoldingsPage() {
                     <td className="px-3 py-1 text-right text-neutral-300 tabular-nums">
                       {nowPrice != null ? `$${nowPrice.toFixed(2)}` : "—"}
                     </td>
-                    <td className={`px-3 py-1 text-right tabular-nums ${deltaColor}`}>
-                      {deltaPct != null ? `${deltaPct >= 0 ? "+" : ""}${deltaPct.toFixed(1)}%` : "—"}
-                    </td>
                     <td className="px-3 py-1 text-right text-neutral-400 tabular-nums" title={costEst ? `Estimated from per-quarter VWAP, accumulating since ${costEst.first_seen_period}. Proxy — typically ±15-25% off true cost.` : "No cost-basis estimate yet (no usable VWAP)."}>
                       {estCost != null ? `$${estCost.toFixed(2)}` : "—"}
                     </td>
                     <td className={`px-3 py-1 text-right tabular-nums ${vsCostColor}`}>
-                      {vsCostPct != null ? `${vsCostPct >= 0 ? "+" : ""}${vsCostPct.toFixed(0)}%` : "—"}
+                      {vsCostPct != null ? fmtPctCompact(vsCostPct) : "—"}
                     </td>
                     <td className={`px-3 py-1 text-right tabular-nums ${qDiffColor}`}
                         title={f.priorPeriod ? `vs prior 13F (period ${f.priorPeriod}): prev shares ${(prev?.shares ?? 0).toLocaleString()}` : "no prior 13F to compare"}>
@@ -468,21 +502,42 @@ export default async function HoldingsPage() {
                 })}
               </tbody>
             </table>
-            {f.exits.length > 0 && (
-              <div className="px-3 py-2 border-t border-neutral-900 bg-neutral-950/60 text-[11px]">
-                <div className="text-neutral-500 mb-1">
-                  Exited this quarter ({f.exits.length}{f.priorPeriod ? ` — vs ${f.priorPeriod}` : ""}):
-                </div>
-                <div className="text-neutral-300 leading-relaxed">
-                  {f.exits.slice(0, 6).map((e, idx) => (
-                    <span key={e.cusip} className="inline-block mr-2">
-                      <span className="text-red-400">{(e.issuer_name ?? "?").length > 28 ? (e.issuer_name ?? "?").slice(0, 28) + "…" : (e.issuer_name ?? "?")}</span>
-                      <span className="text-neutral-500 ml-1">({fmtUsd(e.value_usd)})</span>
-                      {idx < Math.min(f.exits.length, 6) - 1 ? <span className="text-neutral-700">, </span> : null}
-                    </span>
-                  ))}
-                  {f.exits.length > 6 && <span className="text-neutral-500"> +{f.exits.length - 6} more</span>}
-                </div>
+            {(f.exits.length > 0 || f.trims.length > 0) && (
+              <div className="px-3 py-2 border-t border-neutral-900 bg-neutral-950/60 text-[11px] space-y-2">
+                {f.exits.length > 0 && (
+                  <div>
+                    <div className="text-red-400/80 font-medium mb-1">
+                      ✕ Exited this quarter ({f.exits.length}{f.priorPeriod ? ` — vs ${f.priorPeriod}` : ""})
+                    </div>
+                    <div className="text-neutral-300 leading-relaxed">
+                      {f.exits.slice(0, 6).map((e, idx) => (
+                        <span key={e.cusip} className="inline-block mr-2">
+                          <span className="text-red-400">{(e.issuer_name ?? "?").length > 28 ? (e.issuer_name ?? "?").slice(0, 28) + "…" : (e.issuer_name ?? "?")}</span>
+                          <span className="text-neutral-500 ml-1">({fmtUsd(e.value_usd)})</span>
+                          {idx < Math.min(f.exits.length, 6) - 1 ? <span className="text-neutral-700">, </span> : null}
+                        </span>
+                      ))}
+                      {f.exits.length > 6 && <span className="text-neutral-500"> +{f.exits.length - 6} more</span>}
+                    </div>
+                  </div>
+                )}
+                {f.trims.length > 0 && (
+                  <div>
+                    <div className="text-amber-400/80 font-medium mb-1">
+                      ⇣ Major trims (≥30% reduction, {f.trims.length})
+                    </div>
+                    <div className="text-neutral-300 leading-relaxed">
+                      {f.trims.slice(0, 6).map((t, idx) => (
+                        <span key={t.pos.cusip} className="inline-block mr-2">
+                          <span className="text-amber-400">{(t.pos.issuer_name ?? "?").length > 28 ? (t.pos.issuer_name ?? "?").slice(0, 28) + "…" : (t.pos.issuer_name ?? "?")}</span>
+                          <span className="text-neutral-500 ml-1">({fmtPctCompact(t.pct)})</span>
+                          {idx < Math.min(f.trims.length, 6) - 1 ? <span className="text-neutral-700">, </span> : null}
+                        </span>
+                      ))}
+                      {f.trims.length > 6 && <span className="text-neutral-500"> +{f.trims.length - 6} more</span>}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
