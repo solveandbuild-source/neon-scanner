@@ -91,29 +91,47 @@ async function fetchHoldings(): Promise<{
     if (from > 50000) break; // hard cap during plumbing phase — full UI later
   }
 
-  // For each filer, find their MOST RECENT period, keep ALL positions
-  // from that period (so we can compute true portfolio totals), then we'll
-  // trim to top 10 for display.
-  const byFiler = new Map<string, FilerSummary>();
+  // For each filer, collect positions GROUPED BY period so we can diff the
+  // latest quarter vs the prior quarter (CLAUDE.md §6.1: emit new/add/trim/exit).
+  const byFilerByPeriod = new Map<string, Map<string, Holding[]>>();
+  const filerMeta = new Map<string, { name: string; filedAt: Record<string, string> }>();
   for (const h of out) {
-    const cur = byFiler.get(h.cik);
-    if (!cur) {
-      byFiler.set(h.cik, {
-        cik: h.cik,
-        name: h.filer_name ?? h.cik,
-        latestPeriod: h.period_of_report,
-        latestFiledAt: h.filed_at,
-        positions: [h],
-        totalValue: 0,
-        totalPositions: 0,
-      });
-    } else if (h.period_of_report > cur.latestPeriod) {
-      cur.latestPeriod = h.period_of_report;
-      cur.latestFiledAt = h.filed_at;
-      cur.positions = [h];
-    } else if (h.period_of_report === cur.latestPeriod) {
-      cur.positions.push(h);
-    }
+    if (!byFilerByPeriod.has(h.cik)) byFilerByPeriod.set(h.cik, new Map());
+    const periods = byFilerByPeriod.get(h.cik)!;
+    if (!periods.has(h.period_of_report)) periods.set(h.period_of_report, []);
+    periods.get(h.period_of_report)!.push(h);
+    if (!filerMeta.has(h.cik)) filerMeta.set(h.cik, { name: h.filer_name ?? h.cik, filedAt: {} });
+    filerMeta.get(h.cik)!.filedAt[h.period_of_report] = h.filed_at;
+  }
+
+  const byFiler = new Map<string, FilerSummary>();
+  for (const [cik, periods] of byFilerByPeriod) {
+    const sortedPeriods = Array.from(periods.keys()).sort().reverse();
+    const latest = sortedPeriods[0];
+    const prior = sortedPeriods[1] ?? null;
+    const meta = filerMeta.get(cik)!;
+    const priorByCusip = prior
+      ? new Map(periods.get(prior)!.map((p) => [p.cusip, p]))
+      : new Map<string, Holding>();
+    const latestCusips = new Set(periods.get(latest)!.map((p) => p.cusip));
+    // Exits: in prior, not in latest. Sort by prior value desc.
+    const exits: Holding[] = prior
+      ? periods.get(prior)!
+          .filter((p) => !latestCusips.has(p.cusip))
+          .sort((a, b) => (b.value_usd ?? 0) - (a.value_usd ?? 0))
+      : [];
+    byFiler.set(cik, {
+      cik,
+      name: meta.name,
+      latestPeriod: latest,
+      latestFiledAt: meta.filedAt[latest] ?? "",
+      priorPeriod: prior,
+      positions: periods.get(latest)!,
+      priorByCusip,
+      exits,
+      totalValue: 0,
+      totalPositions: 0,
+    });
   }
   // Compute totals across all positions in the latest quarter, THEN trim to top 10.
   //
@@ -221,6 +239,13 @@ type FilerSummary = {
   name: string;
   latestPeriod: string;
   latestFiledAt: string;
+  // Prior-quarter snapshot for diff display (CLAUDE.md §6.1: new/add/trim/exit).
+  // priorPeriod = the immediately-preceding 13F period we have for this filer (null if none).
+  // priorByCusip = O(1) lookup for "did they hold this last quarter?".
+  // exits = positions present last quarter but missing this quarter, sorted by prior value desc.
+  priorPeriod: string | null;
+  priorByCusip: Map<string, Holding>;
+  exits: Holding[];
   positions: Holding[];
   totalValue: number;       // sum of value_usd across ALL positions that quarter (not just top 10)
   totalPositions: number;   // count of all positions that quarter
@@ -354,6 +379,7 @@ export default async function HoldingsPage() {
                   <th className="px-3 py-1 text-right font-medium" title="% move from quarter-end Mark to today's close. Positive = filer is on paper gain since 13F period; negative = underwater.">Δ%</th>
                   <th className="px-3 py-1 text-right font-medium" title="Estimated cost basis — weighted-avg $/share across all accumulation quarters, using each quarter's VWAP as a proxy for entry price. Typically ±15-25% off actual cost. Missing = no usable VWAP yet.">Est. cost</th>
                   <th className="px-3 py-1 text-right font-medium" title="(Now - Est. cost) / Est. cost. Positive = filer is up vs estimated entry; negative = underwater. Treat as orientation, not precise P&L.">vs Cost</th>
+                  <th className="px-3 py-1 text-right font-medium" title="Change vs the filer's PRIOR 13F quarter. NEW = didn't hold last quarter. +X% = added shares. -X% = trimmed. Empty = unchanged or no prior data.">vs Q-1</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-neutral-800">
@@ -382,6 +408,30 @@ export default async function HoldingsPage() {
                     : vsCostPct >= 0 ? "text-emerald-400/80"
                     : vsCostPct >= -15 ? "text-red-400/70"
                     : "text-red-400";
+                  // vs Q-1 diff: NEW (didn't hold last quarter), +X% add, -X% trim, blank if unchanged.
+                  // Threshold ≥5% to surface meaningful change (matches CLAUDE.md §6.1 spirit; spec says ≥10%).
+                  const prev = f.priorByCusip.get(h.cusip);
+                  let qDiffLabel: string | null = null;
+                  let qDiffColor = "text-neutral-500";
+                  if (!f.priorPeriod) {
+                    qDiffLabel = null;
+                  } else if (!prev) {
+                    qDiffLabel = "NEW";
+                    qDiffColor = "text-emerald-300 font-semibold";
+                  } else {
+                    const a = prev.shares ?? 0;
+                    const b = h.shares ?? 0;
+                    if (a > 0) {
+                      const ratio = (b - a) / a;
+                      if (ratio >= 0.05) {
+                        qDiffLabel = `+${(ratio * 100).toFixed(0)}%`;
+                        qDiffColor = ratio >= 0.5 ? "text-emerald-300 font-semibold" : "text-emerald-400/80";
+                      } else if (ratio <= -0.05) {
+                        qDiffLabel = `${(ratio * 100).toFixed(0)}%`;
+                        qDiffColor = ratio <= -0.5 ? "text-red-400 font-semibold" : "text-red-400/80";
+                      }
+                    }
+                  }
                   return (
                   <tr key={`${h.cusip}-${i}`}>
                     <td className="px-3 py-1 text-neutral-200 truncate max-w-[16ch]" title={`${h.issuer_name ?? ""} — CUSIP ${h.cusip}`}>{h.issuer_name ?? "—"}</td>
@@ -409,11 +459,32 @@ export default async function HoldingsPage() {
                     <td className={`px-3 py-1 text-right tabular-nums ${vsCostColor}`}>
                       {vsCostPct != null ? `${vsCostPct >= 0 ? "+" : ""}${vsCostPct.toFixed(0)}%` : "—"}
                     </td>
+                    <td className={`px-3 py-1 text-right tabular-nums ${qDiffColor}`}
+                        title={f.priorPeriod ? `vs prior 13F (period ${f.priorPeriod}): prev shares ${(prev?.shares ?? 0).toLocaleString()}` : "no prior 13F to compare"}>
+                      {qDiffLabel ?? "—"}
+                    </td>
                   </tr>
                   );
                 })}
               </tbody>
             </table>
+            {f.exits.length > 0 && (
+              <div className="px-3 py-2 border-t border-neutral-900 bg-neutral-950/60 text-[11px]">
+                <div className="text-neutral-500 mb-1">
+                  Exited this quarter ({f.exits.length}{f.priorPeriod ? ` — vs ${f.priorPeriod}` : ""}):
+                </div>
+                <div className="text-neutral-300 leading-relaxed">
+                  {f.exits.slice(0, 6).map((e, idx) => (
+                    <span key={e.cusip} className="inline-block mr-2">
+                      <span className="text-red-400">{(e.issuer_name ?? "?").length > 28 ? (e.issuer_name ?? "?").slice(0, 28) + "…" : (e.issuer_name ?? "?")}</span>
+                      <span className="text-neutral-500 ml-1">({fmtUsd(e.value_usd)})</span>
+                      {idx < Math.min(f.exits.length, 6) - 1 ? <span className="text-neutral-700">, </span> : null}
+                    </span>
+                  ))}
+                  {f.exits.length > 6 && <span className="text-neutral-500"> +{f.exits.length - 6} more</span>}
+                </div>
+              </div>
+            )}
           </div>
           );
         })}
