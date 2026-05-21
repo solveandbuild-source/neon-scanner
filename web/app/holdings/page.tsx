@@ -36,11 +36,27 @@ type Holding = {
 // Cost-basis estimate per (filer, ticker) — keyed `${cik}|${ticker}`.
 type CostEstimate = { estimated_cost_basis: number; first_seen_period: string };
 
+// Normalize issuer_name → matchable key. Mirror of cost_basis.py's normalize_name.
+// holdings_13f.ticker is NULL for 100% of rows (parse_13f only stores CUSIP),
+// so we resolve to ticker at render time against the tickers universe.
+const SUFFIX_RE = /\b(INC|INCORPORATED|CORP|CORPORATION|CO|COMPANY|LTD|LIMITED|PLC|HOLDINGS|HLDGS|GROUP|GRP|LLC|LP|TRUST|N V|NV|SA|AG|TR|CL A|CL B|CLASS A|CLASS B|COM|ORD|ORDINARY|SHARES)\b\.?/gi;
+const PUNCT_RE = /[.,&/\-()']/g;
+function normalizeName(s: string | null | undefined): string {
+  if (!s) return "";
+  return s
+    .toUpperCase()
+    .replace(PUNCT_RE, " ")
+    .replace(SUFFIX_RE, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 async function fetchHoldings(): Promise<{
   filers: FilerSummary[];
   total: number;
   prices: Record<string, number>;
   costs: Record<string, CostEstimate>;
+  nameToTicker: Record<string, string>;
 }> {
   const sb = supabaseServer();
   // pull all holdings with filer name joined via the filing
@@ -131,12 +147,33 @@ async function fetchHoldings(): Promise<{
     (a, b) => b.latestFiledAt.localeCompare(a.latestFiledAt),
   );
 
-  // Fetch latest closing prices for every ticker visible in the top-10 lists.
-  // Used by the UI to render "Now" column + Δ% move-since-quarter-end.
+  // Build normalized-name → ticker map FIRST (so we can resolve at render
+  // time + use those resolved tickers to drive the price lookup below).
+  const nameToTicker: Record<string, string> = {};
+  {
+    let off = 0;
+    while (true) {
+      const { data } = await sb.from("tickers").select("ticker,name").range(off, off + 999);
+      if (!data || data.length === 0) break;
+      for (const row of data) {
+        const norm = normalizeName(row.name);
+        if (norm && !(norm in nameToTicker)) nameToTicker[norm] = row.ticker;
+      }
+      if (data.length < 1000) break;
+      off += 1000;
+    }
+  }
+
+  // Resolve each position's ticker (via row.ticker fallback to name lookup)
+  // and collect the set we need prices for.
   const tickerSet = new Set<string>();
   for (const f of filers) {
     for (const p of f.positions) {
-      if (p.ticker) tickerSet.add(p.ticker);
+      const resolved = p.ticker || nameToTicker[normalizeName(p.issuer_name)];
+      if (resolved) {
+        p.ticker = resolved;  // mutate in place so the render path picks it up
+        tickerSet.add(resolved);
+      }
     }
   }
   const prices: Record<string, number> = {};
@@ -176,7 +213,7 @@ async function fetchHoldings(): Promise<{
     }
   }
 
-  return { filers, total: out.length, prices, costs };
+  return { filers, total: out.length, prices, costs, nameToTicker };
 }
 
 type FilerSummary = {
@@ -208,6 +245,7 @@ type Tier = "S" | "A" | "B" | "C";
 
 export default async function HoldingsPage() {
   const { filers, total, prices, costs } = await fetchHoldings();
+  // (nameToTicker mutation already applied to position.ticker in fetchHoldings)
 
   // Compute counts per tier across all filers for the filter-chip badges.
   // Filtering itself is done client-side by TierFilter (toggles .hidden on
