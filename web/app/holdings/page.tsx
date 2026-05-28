@@ -61,32 +61,31 @@ async function fetchHoldings(): Promise<{
   nameToTicker: Record<string, string>;
 }> {
   const sb = supabaseServer();
-  // pull all holdings with filer name joined via the filing
+  // Pull ONLY the latest 2 periods per filer via the holdings_recent() RPC
+  // (migration 015). Previously this paginated the ENTIRE 147K-row holdings_13f
+  // table into the server component on every request, which exceeded Vercel's
+  // function timeout — the page returned 0 bytes and users saw stale browser
+  // cache. The RPC pushes the per-filer period-ranking into Postgres and
+  // returns ~25K rows instead of 147K.
   const out: Holding[] = [];
   let from = 0;
   const page = 1000;
   while (true) {
     const { data, error } = await sb
-      .from("holdings_13f")
-      .select(
-        "cik,period_of_report,cusip,ticker,issuer_name,shares,value_usd,put_call,filings_raw!inner(filer_name,filed_at)",
-      )
-      // Stable secondary sort on `id` is REQUIRED — without it PostgREST's
-      // page-window can drop rows that share the same period_of_report.
-      // Bug caught May 21: Druckenmiller's top positions (Natera, Insmed, TSM)
-      // were silently missing because his ~70 Q1 2026 rows were paginated
-      // unstably across multiple .range() calls.
-      .order("period_of_report", { ascending: false })
-      .order("id", { ascending: true })
+      .rpc("holdings_recent", { max_periods: 2 })
       .range(from, from + page - 1);
     if (error) throw error;
     if (!data || data.length === 0) break;
-    for (const r of data as unknown as Array<Holding & { filings_raw: { filer_name: string | null; filed_at: string } }>) {
+    for (const r of data as Array<{
+      cik: string; period_of_report: string; cusip: string; ticker: string | null;
+      issuer_name: string | null; shares: number | null; value_usd: number | null;
+      put_call: string | null; filer_name: string | null; filed_at: string;
+    }>) {
       out.push({
         cik: r.cik,
-        filer_name: r.filings_raw?.filer_name ?? null,
+        filer_name: r.filer_name ?? null,
         period_of_report: r.period_of_report,
-        filed_at: r.filings_raw?.filed_at ?? "",
+        filed_at: r.filed_at ?? "",
         cusip: r.cusip,
         ticker: r.ticker,
         issuer_name: r.issuer_name,
@@ -97,7 +96,7 @@ async function fetchHoldings(): Promise<{
     }
     if (data.length < page) break;
     from += page;
-    if (from > 200000) break; // raised from 50K → 200K. Caps at ~6-8 quarters of all filers; ensures latest 2 quarters always present in full.
+    if (from > 60000) break; // safety cap. RPC returns ~25K rows (2 periods × all filers); 60K is generous headroom.
   }
 
   // Dedupe amendments: for each (cik, period_of_report) keep ONLY rows from
