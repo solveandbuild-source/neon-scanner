@@ -266,12 +266,40 @@ async function fetchHoldings(): Promise<{
     }
   }
 
-  // Resolve each position's ticker (via row.ticker fallback to name lookup)
-  // and collect the set we need prices for.
+  // Build CUSIP → ticker map from cusip_ticker_map (populated by
+  // ingest/cusip_resolver.py via OpenFIGI). This is the authoritative
+  // resolver for SEC-truncated names and ambiguous ETF prefixes that the
+  // name normalizer can't disambiguate (caught May 22 — "ISHARES TR" /
+  // "ACACIA RESH CORP" had empty cells).
+  const cusipToTicker: Record<string, string> = {};
+  {
+    let off = 0;
+    while (true) {
+      const { data } = await sb
+        .from("cusip_ticker_map")
+        .select("cusip,ticker")
+        .not("ticker", "is", null)
+        .range(off, off + 999);
+      if (!data || data.length === 0) break;
+      for (const row of data) {
+        if (row.ticker) cusipToTicker[row.cusip] = row.ticker;
+      }
+      if (data.length < 1000) break;
+      off += 1000;
+    }
+  }
+
+  // Resolve each position's ticker. Order:
+  //   1) holdings_13f.ticker (rarely populated by parse_13f)
+  //   2) CUSIP → ticker (authoritative, from OpenFIGI)
+  //   3) issuer_name normalize (fallback for CUSIPs we haven't resolved yet)
   const tickerSet = new Set<string>();
   for (const f of filers) {
     for (const p of f.positions) {
-      const resolved = p.ticker || resolveTicker(p.issuer_name, nameToTicker);
+      const resolved =
+        p.ticker
+        || cusipToTicker[p.cusip]
+        || resolveTicker(p.issuer_name, nameToTicker);
       if (resolved) {
         p.ticker = resolved;  // mutate in place so the render path picks it up
         tickerSet.add(resolved);

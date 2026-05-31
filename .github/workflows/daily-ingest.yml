@@ -126,6 +126,15 @@ jobs:
         run: python -m ingest.compute_buy_signals
         continue-on-error: true
 
+      - name: Resolve CUSIPs → tickers via OpenFIGI (incremental)
+        # Maps CUSIPs from holdings_13f rows to tickers. Run BEFORE cost_basis
+        # so cost_basis can use the freshly-resolved tickers. Idempotent —
+        # only POSTs unknown CUSIPs each run. Anonymous OpenFIGI is rate-limited
+        # at 25 req/min × 10 jobs = 250 CUSIPs/min; full backfill (~8K) once,
+        # then daily incremental is <1 min.
+        run: python -m ingest.cusip_resolver
+        continue-on-error: true
+
       - name: Estimate per-(filer, ticker) cost basis via per-quarter VWAP proxy
         # Runs after compute_buy_signals so the latest holdings are reflected.
         # VWAPs are cached permanently per (ticker, quarter) so daily incremental
