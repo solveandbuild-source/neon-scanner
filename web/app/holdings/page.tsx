@@ -292,25 +292,32 @@ async function fetchHoldings(): Promise<{
     }
   }
   // Cost-basis estimates (keyed cik|ticker). Populated by ingest/cost_basis.py.
-  // Missing rows = no usable VWAP yet (newly-tracked filer, illiquid ticker, etc.)
+  //
+  // Supabase default-limits any query to 1000 rows. With ~84 filers × ~150 cost
+  // rows = ~12K total, a single .in() call silently truncates to 1000 (caught
+  // May 22 — Perceptive's PRAX/CELC/etc all showed Est.cost = "—" because the
+  // 1000-row window cut their entries). Must paginate via .range().
   const costs: Record<string, CostEstimate> = {};
   {
     const cikSet = new Set(filers.map((f) => f.cik));
     if (cikSet.size > 0) {
       const ciksArr = Array.from(cikSet);
-      const batchSize = 100;
-      for (let i = 0; i < ciksArr.length; i += batchSize) {
-        const batch = ciksArr.slice(i, i + batchSize);
+      let off = 0;
+      while (true) {
         const { data } = await sb
           .from("filer_position_cost")
           .select("cik,ticker,estimated_cost_basis,first_seen_period")
-          .in("cik", batch);
-        for (const row of data ?? []) {
+          .in("cik", ciksArr)
+          .range(off, off + 999);
+        if (!data || data.length === 0) break;
+        for (const row of data) {
           costs[`${row.cik}|${row.ticker}`] = {
             estimated_cost_basis: row.estimated_cost_basis,
             first_seen_period: row.first_seen_period,
           };
         }
+        if (data.length < 1000) break;
+        off += 1000;
       }
     }
   }
