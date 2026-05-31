@@ -53,6 +53,20 @@ function normalizeName(s: string | null | undefined): string {
     .trim();
 }
 
+// Resolve issuer_name → ticker with truncation-aware fallback.
+// SEC 13F XML truncates names at fixed widths, leaving partial words like
+// "PRAXIS PRECISION MEDICINES I" (instead of "...INC"). Try exact match
+// first, then strip a trailing 1-2 letter token and retry. Caught May 22 —
+// Perceptive's PRAX/CELC/ASND all had Est. cost = "—" for this reason.
+function resolveTicker(issuer: string | null | undefined, m: Record<string, string>): string | null {
+  const n = normalizeName(issuer);
+  if (!n) return null;
+  if (m[n]) return m[n];
+  const trimmed = n.replace(/\s[A-Z]{1,2}$/, "").trim();
+  if (trimmed && trimmed !== n && m[trimmed]) return m[trimmed];
+  return null;
+}
+
 async function fetchHoldings(): Promise<{
   filers: FilerSummary[];
   total: number;
@@ -257,7 +271,7 @@ async function fetchHoldings(): Promise<{
   const tickerSet = new Set<string>();
   for (const f of filers) {
     for (const p of f.positions) {
-      const resolved = p.ticker || nameToTicker[normalizeName(p.issuer_name)];
+      const resolved = p.ticker || resolveTicker(p.issuer_name, nameToTicker);
       if (resolved) {
         p.ticker = resolved;  // mutate in place so the render path picks it up
         tickerSet.add(resolved);
@@ -355,35 +369,36 @@ function fmtUsd(n: number | null): string {
 
 type Tier = "S" | "A" | "B" | "C";
 
-// "Changes vs last quarter" view body. Renders 4 row-based sections:
-// 🆕 New, + Adds, ⇣ Trims, ✕ Exits. Each item gets its own row.
-// Server component — pure rendering, no state.
-function ChangesView({ f }: { f: FilerSummary }) {
-  if (!f.priorPeriod) {
+function truncate32(s: string | null, n = 32): string {
+  const v = s ?? "?";
+  return v.length > n ? v.slice(0, n) + "…" : v;
+}
+
+function EmptyDiff({ priorPeriod, msg }: { priorPeriod: string | null; msg: string }) {
+  if (!priorPeriod) {
     return (
       <div className="px-3 py-6 text-[11px] text-neutral-500 italic text-center">
         No prior 13F to compare. First-quarter filer or only one period of data.
       </div>
     );
   }
-  const totalChanges = f.news.length + f.adds.length + f.trims.length + f.exits.length;
-  if (totalChanges === 0) {
-    return (
-      <div className="px-3 py-6 text-[11px] text-neutral-500 italic text-center">
-        No changes ≥10% vs prior quarter ({f.priorPeriod}).
-      </div>
-    );
+  return (
+    <div className="px-3 py-6 text-[11px] text-neutral-500 italic text-center">
+      {msg} (vs prior quarter {priorPeriod}).
+    </div>
+  );
+}
+
+// "Bought" view: positions the filer ADDED to or INITIATED this quarter.
+function BoughtView({ f }: { f: FilerSummary }) {
+  if (f.news.length + f.adds.length === 0) {
+    return <EmptyDiff priorPeriod={f.priorPeriod} msg="No new positions or adds ≥10%" />;
   }
-  const truncate = (s: string | null, n = 32) => {
-    const v = s ?? "?";
-    return v.length > n ? v.slice(0, n) + "…" : v;
-  };
   return (
     <div className="text-[11px]">
       <div className="px-3 py-1.5 text-neutral-500 bg-neutral-950 border-b border-neutral-900">
-        Diff vs prior 13F (period {f.priorPeriod}) — share-count changes ≥10%
+        New positions + adds (share-count ≥10%) vs {f.priorPeriod}
       </div>
-
       {f.news.length > 0 && (
         <div>
           <div className="px-3 py-1 bg-emerald-950/40 text-emerald-300 font-medium border-b border-emerald-900/30">
@@ -393,7 +408,7 @@ function ChangesView({ f }: { f: FilerSummary }) {
             <tbody className="divide-y divide-neutral-900">
               {f.news.map((p) => (
                 <tr key={`new-${p.cusip}`} className="hover:bg-neutral-900/40">
-                  <td className="px-3 py-1 text-neutral-200 truncate max-w-[20ch]" title={p.issuer_name ?? ""}>{truncate(p.issuer_name)}</td>
+                  <td className="px-3 py-1 text-neutral-200 truncate max-w-[20ch]" title={p.issuer_name ?? ""}>{truncate32(p.issuer_name)}</td>
                   <td className="px-3 py-1 text-right text-neutral-300 tabular-nums">{fmtShares(p.shares)}</td>
                   <td className="px-3 py-1 text-right text-neutral-300 tabular-nums">{fmtUsd(p.value_usd)}</td>
                 </tr>
@@ -402,7 +417,6 @@ function ChangesView({ f }: { f: FilerSummary }) {
           </table>
         </div>
       )}
-
       {f.adds.length > 0 && (
         <div>
           <div className="px-3 py-1 bg-emerald-950/30 text-emerald-400 font-medium border-b border-emerald-900/20">
@@ -412,7 +426,7 @@ function ChangesView({ f }: { f: FilerSummary }) {
             <tbody className="divide-y divide-neutral-900">
               {f.adds.map((a) => (
                 <tr key={`add-${a.pos.cusip}`} className="hover:bg-neutral-900/40">
-                  <td className="px-3 py-1 text-neutral-200 truncate max-w-[20ch]" title={a.pos.issuer_name ?? ""}>{truncate(a.pos.issuer_name)}</td>
+                  <td className="px-3 py-1 text-neutral-200 truncate max-w-[20ch]" title={a.pos.issuer_name ?? ""}>{truncate32(a.pos.issuer_name)}</td>
                   <td className="px-3 py-1 text-right text-neutral-400 tabular-nums">{fmtShares(a.prevShares)} → {fmtShares(a.pos.shares)}</td>
                   <td className="px-3 py-1 text-right text-emerald-400 tabular-nums font-semibold">{fmtPctCompact(a.pct)}</td>
                 </tr>
@@ -421,7 +435,22 @@ function ChangesView({ f }: { f: FilerSummary }) {
           </table>
         </div>
       )}
+    </div>
+  );
+}
 
+// "Sold" view: positions the filer TRIMMED or EXITED this quarter.
+// Per CLAUDE.md §2.3 — exits/trims get equal prominence to entries via
+// their own dedicated tab (not buried in a footer).
+function SoldView({ f }: { f: FilerSummary }) {
+  if (f.trims.length + f.exits.length === 0) {
+    return <EmptyDiff priorPeriod={f.priorPeriod} msg="No trims ≥10% or exits" />;
+  }
+  return (
+    <div className="text-[11px]">
+      <div className="px-3 py-1.5 text-neutral-500 bg-neutral-950 border-b border-neutral-900">
+        Trims (share-count ≥10%) + exits vs {f.priorPeriod}
+      </div>
       {f.trims.length > 0 && (
         <div>
           <div className="px-3 py-1 bg-amber-950/30 text-amber-400 font-medium border-b border-amber-900/20">
@@ -431,7 +460,7 @@ function ChangesView({ f }: { f: FilerSummary }) {
             <tbody className="divide-y divide-neutral-900">
               {f.trims.map((t) => (
                 <tr key={`trim-${t.pos.cusip}`} className="hover:bg-neutral-900/40">
-                  <td className="px-3 py-1 text-neutral-200 truncate max-w-[20ch]" title={t.pos.issuer_name ?? ""}>{truncate(t.pos.issuer_name)}</td>
+                  <td className="px-3 py-1 text-neutral-200 truncate max-w-[20ch]" title={t.pos.issuer_name ?? ""}>{truncate32(t.pos.issuer_name)}</td>
                   <td className="px-3 py-1 text-right text-neutral-400 tabular-nums">{fmtShares(t.prevShares)} → {fmtShares(t.pos.shares)}</td>
                   <td className="px-3 py-1 text-right text-amber-400 tabular-nums font-semibold">{fmtPctCompact(t.pct)}</td>
                 </tr>
@@ -440,7 +469,6 @@ function ChangesView({ f }: { f: FilerSummary }) {
           </table>
         </div>
       )}
-
       {f.exits.length > 0 && (
         <div>
           <div className="px-3 py-1 bg-red-950/30 text-red-400 font-medium border-b border-red-900/20">
@@ -450,7 +478,7 @@ function ChangesView({ f }: { f: FilerSummary }) {
             <tbody className="divide-y divide-neutral-900">
               {f.exits.map((e) => (
                 <tr key={`exit-${e.cusip}`} className="hover:bg-neutral-900/40">
-                  <td className="px-3 py-1 text-neutral-200 truncate max-w-[20ch]" title={e.issuer_name ?? ""}>{truncate(e.issuer_name)}</td>
+                  <td className="px-3 py-1 text-neutral-200 truncate max-w-[20ch]" title={e.issuer_name ?? ""}>{truncate32(e.issuer_name)}</td>
                   <td className="px-3 py-1 text-right text-neutral-400 tabular-nums">{fmtShares(e.shares)} sh</td>
                   <td className="px-3 py-1 text-right text-red-400/80 tabular-nums">{fmtUsd(e.value_usd)} sold</td>
                 </tr>
@@ -568,7 +596,8 @@ export default async function HoldingsPage() {
               <span>{f.totalPositions} positions</span>
             </div>
             <FilerCardTabs
-              changesCount={f.news.length + f.adds.length + f.trims.length + f.exits.length}
+              changesCount={f.news.length + f.adds.length}
+              soldCount={f.trims.length + f.exits.length}
               current={(
             <table className="w-full text-xs">
               <thead className="text-neutral-500">
@@ -659,7 +688,8 @@ export default async function HoldingsPage() {
               </tbody>
             </table>
               )}
-              changes={(<ChangesView f={f} />)}
+              changes={(<BoughtView f={f} />)}
+              sold={(<SoldView f={f} />)}
             />
           </div>
           );

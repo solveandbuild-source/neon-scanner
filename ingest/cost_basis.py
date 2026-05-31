@@ -52,6 +52,25 @@ def normalize_name(s: str | None) -> str:
     s = SUFFIX_RE.sub("", s)
     return re.sub(r"\s+", " ", s).strip()
 
+
+def resolve_ticker(issuer: str | None, name_to_ticker: dict[str, str]) -> str | None:
+    """Resolve issuer_name → ticker with SEC-truncation fallback.
+
+    SEC 13F XML truncates issuer names at fixed widths, leaving partial
+    trailing tokens like 'PRAXIS PRECISION MEDICINES I' (rather than
+    '...INC'). Try exact normalized match first, then strip trailing 1-2
+    letter tokens and retry. Caught May 22 when Perceptive's biotech
+    positions all failed to resolve."""
+    n = normalize_name(issuer)
+    if not n:
+        return None
+    if n in name_to_ticker:
+        return name_to_ticker[n]
+    trimmed = re.sub(r"\s[A-Z]{1,2}$", "", n).strip()
+    if trimmed and trimmed != n and trimmed in name_to_ticker:
+        return name_to_ticker[trimmed]
+    return None
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(PROJECT_ROOT / ".env")
 
@@ -174,7 +193,7 @@ def main() -> None:
     for h in all_h:
         if h.get("shares") is None:
             continue
-        ticker = h.get("ticker") or name_to_ticker.get(normalize_name(h.get("issuer_name")))
+        ticker = h.get("ticker") or resolve_ticker(h.get("issuer_name"), name_to_ticker)
         if not ticker:
             unresolved += 1
             continue
