@@ -61,18 +61,31 @@ def paginated(sb: Client, table: str, sel: str, **filters: Any) -> list[dict[str
     return out
 
 
-def openfigi_lookup(cusips: list[str]) -> dict[str, dict[str, str] | None]:
-    """POST a batch of CUSIPs to OpenFIGI; return {cusip → {ticker, name, ...} or None}."""
+def openfigi_lookup(cusips: list[str], max_retries: int = 4) -> dict[str, dict[str, str] | None]:
+    """POST a batch of CUSIPs to OpenFIGI; return {cusip → {ticker, name, ...} or None}.
+
+    Retries with exponential backoff on transient network errors (the May 22
+    backfill died at 580/8097 due to a server-disconnect mid-request)."""
     if not cusips:
         return {}
     body = [{"idType": "ID_CUSIP", "idValue": c} for c in cusips]
-    r = requests.post(OPENFIGI_URL, json=body, headers={"Content-Type": "application/json"}, timeout=30)
-    if r.status_code == 429:
-        # rate-limited: back off and retry once
-        time.sleep(60)
-        r = requests.post(OPENFIGI_URL, json=body, headers={"Content-Type": "application/json"}, timeout=30)
-    r.raise_for_status()
-    rows = r.json()
+    last_exc: Exception | None = None
+    for attempt in range(max_retries):
+        try:
+            r = requests.post(OPENFIGI_URL, json=body, headers={"Content-Type": "application/json"}, timeout=30)
+            if r.status_code == 429:
+                time.sleep(60)
+                continue
+            r.raise_for_status()
+            rows = r.json()
+            break
+        except (requests.exceptions.RequestException, ConnectionError) as e:
+            last_exc = e
+            wait = 2 ** attempt  # 1s, 2s, 4s, 8s
+            time.sleep(wait)
+    else:
+        # all retries exhausted
+        raise RuntimeError(f"OpenFIGI failed after {max_retries} retries: {last_exc}") from last_exc
     out: dict[str, dict[str, str] | None] = {}
     for cusip, row in zip(cusips, rows, strict=False):
         # row format: {"data": [{"ticker":"...","name":"...","exchCode":"...","securityType2":"..."}]} OR {"warning":"..."}
