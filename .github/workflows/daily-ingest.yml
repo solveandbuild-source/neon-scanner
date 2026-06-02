@@ -142,6 +142,12 @@ jobs:
         run: python -m ingest.cost_basis
         continue-on-error: true
 
+      - name: Compute 13F-clone trailing returns (1Y / 3Y) per filer
+        # Reuses the ticker_quarter_vwap cache from cost_basis as entry prices.
+        # Fast (<1 min). Powers the per-card track-record display on /holdings.
+        run: python -m ingest.filer_returns
+        continue-on-error: true
+
   # ──────────────────────────────────────────────────────────────────
   # WEEKLY: AI analyst pass on watchlist (Sundays only — Groq calls cost
   # money + rate-limit at ~10 RPM so run sparingly).

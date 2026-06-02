@@ -38,6 +38,10 @@ type Holding = {
 // Cost-basis estimate per (filer, ticker) — keyed `${cik}|${ticker}`.
 type CostEstimate = { estimated_cost_basis: number; first_seen_period: string };
 
+// 13F-clone trailing return per filer (from filer_performance table).
+// oneY/threeY are %; cov is the priced-coverage reliability indicator.
+type FilerPerf = { oneY: number | null; threeY: number | null; covOneY: number | null; covThreeY: number | null };
+
 // Normalize issuer_name → matchable key. Mirror of cost_basis.py's normalize_name.
 // holdings_13f.ticker is NULL for 100% of rows (parse_13f only stores CUSIP),
 // so we resolve to ticker at render time against the tickers universe.
@@ -73,6 +77,7 @@ async function fetchHoldings(): Promise<{
   prices: Record<string, number>;
   costs: Record<string, CostEstimate>;
   nameToTicker: Record<string, string>;
+  perf: Record<string, FilerPerf>;
 }> {
   const sb = supabaseServer();
   // Pull ONLY the latest 2 periods per filer via the holdings_recent() RPC
@@ -350,7 +355,21 @@ async function fetchHoldings(): Promise<{
     }
   }
 
-  return { filers, total: out.length, prices, costs, nameToTicker };
+  // 13F-clone trailing returns per filer (filer_performance, from
+  // ingest/filer_returns.py). Small table (~2 rows/filer) — single query.
+  const perf: Record<string, FilerPerf> = {};
+  {
+    const { data } = await sb
+      .from("filer_performance")
+      .select("cik,horizon,return_pct,priced_coverage");
+    for (const row of data ?? []) {
+      const p = (perf[row.cik] ??= { oneY: null, threeY: null, covOneY: null, covThreeY: null });
+      if (row.horizon === "1Y") { p.oneY = row.return_pct; p.covOneY = row.priced_coverage; }
+      else if (row.horizon === "3Y") { p.threeY = row.return_pct; p.covThreeY = row.priced_coverage; }
+    }
+  }
+
+  return { filers, total: out.length, prices, costs, nameToTicker, perf };
 }
 
 type FilerSummary = {
@@ -527,7 +546,7 @@ function SoldView({ f }: { f: FilerSummary }) {
 }
 
 export default async function HoldingsPage() {
-  const { filers, total, prices, costs } = await fetchHoldings();
+  const { filers, total, prices, costs, perf } = await fetchHoldings();
   // (nameToTicker mutation already applied to position.ticker in fetchHoldings)
 
   // Compute counts per tier across all filers for the filter-chip badges.
@@ -626,9 +645,27 @@ export default async function HoldingsPage() {
                 <div className="text-[10px] text-neutral-500 tabular-nums">period {f.latestPeriod}</div>
               </div>
             </div>
-            <div className="px-3 py-1 bg-neutral-950 text-[10px] text-neutral-500 flex justify-between">
-              <span>Total portfolio: {fmtUsd(f.totalValue)}</span>
-              <span>{f.totalPositions} positions</span>
+            <div className="px-3 py-1 bg-neutral-950 text-[10px] text-neutral-500 flex justify-between items-center gap-2">
+              <span>Total portfolio: {fmtUsd(f.totalValue)} · {f.totalPositions} positions</span>
+              {(() => {
+                const fp = perf[f.cik];
+                if (!fp || (fp.oneY == null && fp.threeY == null)) return null;
+                const col = (v: number | null) =>
+                  v == null ? "text-neutral-600"
+                  : v >= 0 ? "text-emerald-400/80" : "text-red-400/80";
+                const fmt = (v: number | null) => (v == null ? "—" : `${v >= 0 ? "+" : ""}${v.toFixed(0)}%`);
+                return (
+                  <span
+                    className="tabular-nums whitespace-nowrap"
+                    title={"13F-CLONE RETURN — if you'd mirrored this filer's disclosed long book at the period-start price and held to today.\n\nThis is NOT the filer's actual fund return: 13F omits shorts, cash, options and international. For low-AUM-coverage filers (e.g. macro/credit funds) it reflects only the visible US-equity slice. Value-weighted, per-position return clamped to bound bad data."}
+                  >
+                    <span className="text-neutral-600">13F book: </span>
+                    <span className="text-neutral-500">1Y </span><span className={col(fp.oneY)}>{fmt(fp.oneY)}</span>
+                    <span className="text-neutral-700"> · </span>
+                    <span className="text-neutral-500">3Y </span><span className={col(fp.threeY)}>{fmt(fp.threeY)}</span>
+                  </span>
+                );
+              })()}
             </div>
             <FilerCardTabs
               changesCount={f.news.length + f.adds.length}
