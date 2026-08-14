@@ -23,11 +23,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <nav className="flex gap-4 text-sm text-neutral-400 flex-1">
             <Link href="/" className="hover:text-neutral-100">Filings</Link>
             <Link href="/holdings" className="hover:text-neutral-100">Holdings</Link>
-            <Link href="/events" className="hover:text-neutral-100">Events</Link>
-            <Link href="/flows" className="hover:text-neutral-100">Flows</Link>
+            <Link href="/events" className="hover:text-neutral-100">Clusters</Link>
+            <Link href="/corporate" className="hover:text-neutral-100">Corporate events</Link>
             <Link href="/signals" className="hover:text-neutral-100">Signals</Link>
-            <Link href="/signals/analysis" className="hover:text-neutral-100">Analysis</Link>
-            <Link href="/positions" className="hover:text-neutral-100">Positions</Link>
           </nav>
           <Link href="/learn" className="text-sm text-neutral-400 hover:text-neutral-100 border-l border-neutral-800 pl-4">
             Learn

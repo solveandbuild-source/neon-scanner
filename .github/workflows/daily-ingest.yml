@@ -153,10 +153,13 @@ jobs:
   # money + rate-limit at ~10 RPM so run sparingly).
   # ──────────────────────────────────────────────────────────────────
   analyst-pass:
-    # Run only on Sunday's scheduled trigger, or any manual dispatch
-    if: |
-      github.event_name == 'workflow_dispatch' ||
-      github.event.schedule == '0 22 * * 0'
+    # DISABLED — the Analysis page is hidden, so the weekly Groq analyst pass is
+    # turned off to stop paid API calls. To re-enable, replace `if: false` with
+    # the original trigger below:
+    #   if: |
+    #     github.event_name == 'workflow_dispatch' ||
+    #     github.event.schedule == '0 22 * * 0'
+    if: false
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
