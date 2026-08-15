@@ -26,6 +26,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <Link href="/events" className="hover:text-neutral-100">Clusters</Link>
             <Link href="/corporate" className="hover:text-neutral-100">Corporate events</Link>
             <Link href="/signals" className="hover:text-neutral-100">Signals</Link>
+            <Link href="/earnings" className="hover:text-neutral-100">Earnings</Link>
           </nav>
           <Link href="/learn" className="text-sm text-neutral-400 hover:text-neutral-100 border-l border-neutral-800 pl-4">
             Learn

@@ -66,6 +66,12 @@ jobs:
         run: python -m ingest.etf_metrics
         continue-on-error: true
 
+      - name: Refresh upcoming earnings dates + 1w/1m returns (large-cap ∪ filer holdings)
+        # Powers the /earnings tab. Per-ticker Yahoo calls (~1-2k names), paced —
+        # last Yahoo step so nothing waits on it.
+        run: python -m ingest.earnings_calendar
+        continue-on-error: true
+
   # ──────────────────────────────────────────────────────────────────
   # SEC EDGAR PIPELINE — every ingest that hits sec.gov.
   # All scripts use 8 req/sec pacing (under SEC's 10/s limit).
