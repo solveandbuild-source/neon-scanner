@@ -4,12 +4,13 @@ import { FormTooltip } from "@/components/FormTooltip";
 import { FORMS } from "@/lib/glossary";
 import Link from "next/link";
 
-// Re-fetch from Supabase at most every 30 min (ISR) instead of freezing the
-// data at build time. The ingest cron only updates once/day, so 30-min
-// freshness is ample and avoids re-pulling ~8K filing rows on every request.
-// Without this, the Filings landing page is statically rendered once at build
-// time and freezes its data + its "(yesterday)" relative dates at the last deploy.
-export const revalidate = 1800;
+// Read Supabase live on EVERY request, like every other page. We briefly used
+// ISR (revalidate = 1800) to avoid re-pulling ~8K rows per load — but on a
+// low-traffic site ISR served a stale cached snapshot for days (stale-while-
+// revalidate only regenerates when someone visits, and even then serves the
+// old page first). That was the recurring "stale data" bug. Freshness wins
+// over the ~1s fetch; force-dynamic never caches.
+export const dynamic = "force-dynamic";
 
 type Filing = {
   id: string;
